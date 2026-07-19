@@ -57,8 +57,7 @@ app.use('/api/admin', adminRoutes);
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     success: true,
-    message: 'ShopNest API is healthy and active',
-    timestamp: new Date()
+    message: 'API is running'
   });
 });
 
