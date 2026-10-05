@@ -1,16 +1,36 @@
 import { z } from 'zod';
 
-export const createProductValidator = z.object({
-  title: z.string().min(1, 'Product title is required'),
-  brand: z.string().min(1, 'Product brand is required'),
-  category: z.string().min(1, 'Product category is required'),
-  price: z.number().min(0, 'Price must be a positive number'),
-  image: z.string().url('Product image must be a valid URL'),
-  description: z.string().min(1, 'Product description is required'),
-  tags: z.array(z.string()).optional(),
-  colors: z.array(z.string()).optional(),
-  sizes: z.array(z.string()).optional(),
-  stock: z.number().min(0, 'Stock must be a positive number').optional(),
+const productFields = z.object({
+  title: z.string().trim().min(1).max(180),
+  brand: z.string().trim().min(1).max(100),
+  category: z.string().trim().min(1).max(100),
+  sku: z.string().trim().max(64).optional(),
+  price: z.coerce.number().finite().min(0),
+  discountPrice: z.preprocess(
+    (value) => value === '' || value === null ? null : Number(value),
+    z.number().finite().min(0).nullable(),
+  ).optional(),
+  image: z.string().url().optional(),
+  images: z.array(z.string().url()).max(8).optional(),
+  imagePublicIds: z.array(z.string().max(255)).max(8).optional(),
+  description: z.string().trim().min(1).max(10000),
+  tags: z.array(z.string().trim().max(50)).max(30).optional(),
+  colors: z.array(z.string().trim().max(50)).max(50).optional(),
+  sizes: z.array(z.string().trim().max(50)).max(50).optional(),
+  stock: z.coerce.number().finite().min(0).optional(),
+  variants: z.array(z.object({
+    sku: z.string().trim().max(64).optional(),
+    size: z.string().trim().max(50).optional(),
+    color: z.string().trim().max(50).optional(),
+    price: z.coerce.number().finite().min(0).optional(),
+    stock: z.coerce.number().finite().min(0).optional(),
+  })).max(100).optional(),
+  specifications: z.array(z.object({
+    name: z.string().trim().min(1).max(100),
+    value: z.string().trim().min(1).max(500),
+  })).max(100).optional(),
+  isFeatured: z.boolean().optional(),
+  status: z.enum(['active', 'inactive']).optional(),
   details: z.object({
     material: z.string().optional(),
     dimensions: z.string().optional(),
@@ -18,4 +38,9 @@ export const createProductValidator = z.object({
   }).optional()
 });
 
-export const updateProductValidator = createProductValidator.partial();
+export const createProductValidator = productFields.refine(
+  (product) => Boolean(product.image || product.images?.length),
+  { message: 'At least one product image is required.', path: ['images'] },
+);
+
+export const updateProductValidator = productFields.partial();

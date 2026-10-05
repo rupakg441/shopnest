@@ -482,7 +482,7 @@ export const mockProducts = [
     price: 145.00,
     rating: 4.7,
     reviewsCount: 16,
-    image: "https://lh3.googleusercontent.com/aida-public/AB6AXuA_HyReFja-UmMBDv9-e5naozPvtFZU3YvVgx7LLu34cmpzodrgE28J3JOYbjOFE3aztZ3XQvCsZaexesPJar6DJifCMvHdxe2xMVHJORsgV63XTPC2JWPsnaRU9jseu4hmiFhgYXRs6_inw1XtvXmEXB9AkE6CK5V2PdGOT1-6ApQpSaEa2SGAZrpHBomlvt_WgiaBJOBqozmcdDYFZNQu14mqCu34-6aLHGSq2ZRXHDkGqyEPaB2",
+    image: "https://images.unsplash.com/photo-1613662632164-7f2b081a5b46?auto=format&fit=crop&w=1200&q=85",
     description: "A pair of minimalist leather sandals in a soft tan color, placed on a white marble slab.",
     tags: ["LIMITED"],
     colors: ["Tan Leather", "Black Leather"],

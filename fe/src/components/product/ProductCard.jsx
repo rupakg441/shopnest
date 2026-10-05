@@ -58,7 +58,7 @@ const ProductCard = ({ product }) => {
             />
           </button>
           {/* Badge overlays */}
-          {isBestseller && (
+          {(isBestseller || product.isFeatured) && (
             <span className="absolute top-4 left-4 bg-primary text-on-primary font-label-caps text-[9px] px-2 py-1 tracking-widest uppercase">
               BESTSELLER
             </span>
@@ -83,7 +83,8 @@ const ProductCard = ({ product }) => {
         </h4>
       </div>
       <p className="font-body-md text-primary font-semibold mt-1">
-        ${product.price.toFixed(2)}
+        ${Number(product.discountPrice != null && product.discountPrice < product.price ? product.discountPrice : product.price).toFixed(2)}
+        {product.discountPrice != null && product.discountPrice < product.price && <span className="ml-sm text-sm font-normal text-on-surface-variant line-through">${Number(product.price).toFixed(2)}</span>}
       </p>
     </div>
   );

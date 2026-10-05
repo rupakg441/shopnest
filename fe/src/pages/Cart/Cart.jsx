@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
-import { updateQuantity, removeFromCart, applyPromo } from '../../features/cart/cartSlice';
-import { addToCart } from '../../features/cart/cartSlice';
+import { updateQuantity, removeFromCart, applyCoupon, clearCoupon, addToCart, setCart } from '../../features/cart/cartSlice';
+import { useAddCartItemMutation, useRemoveCartItemMutation, useUpdateCartItemMutation } from '../../features/cart/cartApi';
+import { useValidateCouponMutation } from '../../features/checkout/couponApi';
 import { useGetProductsQuery } from '../../features/products/productApi';
 import EmptyState from '../../components/common/EmptyState';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
@@ -13,39 +14,71 @@ const Cart = () => {
   const dispatch = useDispatch();
 
   const cart = useSelector((state) => state.cart);
+  const authenticated = useSelector((state) => state.auth.isAuthenticated);
   const { data: allProducts, isLoading } = useGetProductsQuery();
+  const [addCartItem] = useAddCartItemMutation();
+  const [updateCartItem] = useUpdateCartItemMutation();
+  const [removeCartItem] = useRemoveCartItemMutation();
+  const [validateCoupon, { isLoading: couponLoading }] = useValidateCouponMutation();
 
   const [promoInput, setPromoInput] = useState("");
   const [promoMessage, setPromoMessage] = useState("");
 
-  const handleQuantityChange = (item, direction) => {
+  const handleQuantityChange = async (item, direction) => {
     const newQty = direction === 'inc' ? item.quantity + 1 : item.quantity - 1;
     if (newQty > 0) {
+      if (authenticated) {
+        try {
+          const result = await updateCartItem({ productId: item.id, quantity: newQty, color: item.color || '', size: item.size || '' }).unwrap();
+          dispatch(setCart(result));
+        } catch (error) {
+          alert(error?.data?.message || 'Cart quantity could not be updated.');
+        }
+        return;
+      }
       dispatch(updateQuantity({ id: item.id, color: item.color, size: item.size, quantity: newQty }));
     }
   };
 
-  const handleRemove = (item) => {
+  const handleRemove = async (item) => {
+    if (authenticated) {
+      try {
+        const result = await removeCartItem({ productId: item.id, color: item.color || '', size: item.size || '' }).unwrap();
+        dispatch(setCart(result));
+      } catch (error) {
+        alert(error?.data?.message || 'Cart item could not be removed.');
+      }
+      return;
+    }
     dispatch(removeFromCart({ id: item.id, color: item.color, size: item.size }));
   };
 
-  const handleApplyPromo = (e) => {
+  const handleApplyPromo = async (e) => {
     e.preventDefault();
-    if (promoInput.trim().toUpperCase() === "WELCOME10") {
-      if (cart.promoApplied) {
-        setPromoMessage("Coupon already applied.");
-      } else {
-        dispatch(applyPromo(promoInput));
-        setPromoMessage("10% discount applied successfully.");
-        setPromoInput("");
-      }
-    } else {
-      setPromoMessage("Invalid coupon code. Try WELCOME10.");
+    if (!authenticated) {
+      setPromoMessage('Sign in to validate and use a coupon.');
+      return;
     }
-    setTimeout(() => setPromoMessage(""), 4000);
+    try {
+      const coupon = await validateCoupon(promoInput).unwrap();
+      dispatch(applyCoupon(coupon));
+      setPromoMessage(`Coupon ${coupon.code} applied.`);
+      setPromoInput('');
+    } catch (error) {
+      setPromoMessage(error.data?.message || 'This coupon could not be applied.');
+    }
   };
 
-  const handleQuickAdd = (product) => {
+  const handleQuickAdd = async (product) => {
+    if (authenticated) {
+      try {
+        const result = await addCartItem({ productId: product.id, quantity: 1, color: product.colors?.[0] || '', size: product.sizes?.[0] || '' }).unwrap();
+        dispatch(setCart(result));
+      } catch (error) {
+        alert(error?.data?.message || 'Product could not be added to your cart.');
+      }
+      return;
+    }
     dispatch(addToCart({
       id: product.id,
       title: product.title,
@@ -173,6 +206,7 @@ const Cart = () => {
                 <span className="text-on-surface-variant">Subtotal</span>
                 <span>${cart.subtotal.toFixed(2)}</span>
               </div>
+              {cart.promoApplied && <div className="flex justify-between font-body-md text-green-700"><span>Coupon {cart.promoCode}</span><span>-${cart.discount.toFixed(2)} <button type="button" onClick={() => { dispatch(clearCoupon()); setPromoMessage('Coupon removed.'); }} className="ml-2 underline">Remove</button></span></div>}
               
               <div className="flex justify-between font-body-md text-body-md text-primary">
                 <div className="flex flex-col">
@@ -196,23 +230,21 @@ const Cart = () => {
               <div className="flex gap-base">
                 <input
                   type="text"
-                  placeholder="Enter code (WELCOME10)"
+                  placeholder="Enter coupon code"
                   value={promoInput}
                   onChange={(e) => setPromoInput(e.target.value)}
                   className="flex-1 bg-surface border border-outline-variant rounded-lg px-md py-sm focus:ring-0 focus:border-primary text-body-sm transition-all text-primary"
                 />
                 <button
                   type="submit"
+                  disabled={couponLoading || !promoInput.trim()}
                   className="font-button text-button px-md py-sm border border-primary hover:bg-primary hover:text-white transition-all rounded-lg text-primary"
                 >
-                  Apply
+                  {couponLoading ? 'Checking…' : 'Apply'}
                 </button>
               </div>
               {promoMessage && (
                 <p className="text-xs font-bold text-secondary mt-1">{promoMessage}</p>
-              )}
-              {cart.promoApplied && (
-                <p className="text-xs text-green-700 font-bold">10% discount applied via coupon code: {cart.promoCode}</p>
               )}
             </form>
 
@@ -233,7 +265,7 @@ const Cart = () => {
               
               <div className="flex items-center justify-center gap-xs text-on-surface-variant mt-md">
                 <Lock size={12} className="text-secondary" />
-                <p className="text-center text-[10px] font-label-caps">Secure Checkout Powered by ShopNest Pay</p>
+                  <p className="text-center text-[10px] font-label-caps">Secure order processing</p>
               </div>
             </div>
           </div>

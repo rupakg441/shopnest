@@ -1,14 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { useGetProductByIdQuery, useGetProductsQuery } from '../../features/products/productApi';
+import { useGetProductByIdQuery, useGetCatalogPageQuery } from '../../features/products/productApi';
+import { useGetProductReviewsQuery, useCreateProductReviewMutation } from '../../features/products/reviewApi';
 import { addToCart } from '../../features/cart/cartSlice';
+import { useAddCartItemMutation } from '../../features/cart/cartApi';
 import { toggleWishlist } from '../../features/ui/uiSlice';
+import { useAddWishlistItemMutation, useRemoveWishlistItemMutation } from '../../features/wishlist/wishlistApi';
 import Rating from '../../components/common/Rating';
 import Breadcrumb from '../../components/common/Breadcrumb';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import ProductCard from '../../components/product/ProductCard';
-import { Heart, Truck, ShieldCheck, ZoomIn, ArrowRight } from 'lucide-react';
+import { Heart, Truck, ShieldCheck, ZoomIn, ArrowRight, Sparkles } from 'lucide-react';
+import { useGetAIRecommendationsQuery } from '../../features/ai/aiApi';
 
 const ProductDetails = () => {
   const { id } = useParams();
@@ -16,9 +20,15 @@ const ProductDetails = () => {
   const dispatch = useDispatch();
 
   const { data: product, isLoading, isError } = useGetProductByIdQuery(id || "p11");
-  const { data: allProducts } = useGetProductsQuery();
+  const { data: relatedData } = useGetCatalogPageQuery({ category: product?.category, page: 1, limit: 5 }, { skip: !product });
+  const { data: reviews = [], isLoading: reviewsLoading } = useGetProductReviewsQuery(id, { skip: !id });
+  const [createReview, { isLoading: submittingReview }] = useCreateProductReviewMutation();
+  const [addCartItem] = useAddCartItemMutation();
+  const [addWishlistItem] = useAddWishlistItemMutation();
+  const [removeWishlistItem] = useRemoveWishlistItemMutation();
 
   const wishlist = useSelector((state) => state.ui.wishlist);
+  const auth = useSelector((state) => state.auth);
   const isWishlisted = product ? wishlist.includes(product.id) : false;
 
   const [activeImageIdx, setActiveImageIdx] = useState(0);
@@ -27,6 +37,11 @@ const ProductDetails = () => {
   const [quantity, setQuantity] = useState(1);
   const [activeTab, setActiveTab] = useState("desc");
   const [cartSuccess, setCartSuccess] = useState(false);
+  const [cartMessage, setCartMessage] = useState('');
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewComment, setReviewComment] = useState('');
+  const [reviewMessage, setReviewMessage] = useState('');
 
   // Set default swatches when product loads
   useEffect(() => {
@@ -54,43 +69,80 @@ const ProductDetails = () => {
     );
   }
 
-  // Fallback gallery images
-  const gallery = [
-    product.image,
-    "https://lh3.googleusercontent.com/aida-public/AB6AXuDDMqC3d1zm0IhBeGsWQZ65ys1CevnkOYgtzdCp2t4Y5jVJZK4iF8sjEE7XUwLQxv1ctAkDosXdNhN-w_A71M8n4CNckVf3TWZdx3gfYvSNKyqDQrw_xlcVBVy-ARh60sLRvscjEURa31MHkOFutENe4a_6rJPzZfd6OX7qCXLhjMQEOsvkFQDLE9DdBRvPLgSSnUcgKM3YMYwkVFzHZuUmhU2wK18ybErlknXVFhGvb-jo-uALn3wo",
-    "https://lh3.googleusercontent.com/aida-public/AB6AXuDjIG-QDUHT8_9T-6KUk-ZFXj6m8IXoGbvLQJ8_OIIUFFETiKtX2jkBWGyioiSDSxTgdJFc9lP2j43vxgsFqpb2Sc7ajuCSVX0z8Z-NAV2TpLs9DY26Rig7IHMcz21tIXDRJK40Go-ZGERroNgSAC8f7kgbPUel5ssOWu7zeXc7tkFLUVT5g2-_asXRkJc3oJJO1eTU5aWVohtZJI7FrmgbsHEpxk5VTv_-PVLHw9KlTXNGcCNeDRTY",
+  const gallery = product.images?.length ? product.images : [product.image].filter(Boolean);
+  const selectedVariant = product.variants?.find((variant) =>
+    (!variant.color || variant.color === selectedColor) && (!variant.size || variant.size === selectedSize));
+  const currentPrice = selectedVariant?.price ?? product.discountPrice ?? product.price;
+  const availableStock = selectedVariant?.stock ?? product.stock;
+  const hasAvailableVariant = !product.variants?.length || Boolean(selectedVariant);
+  const specifications = [
+    ...(product.specifications || []),
+    ...Object.entries(product.details || {}).filter(([, value]) => value).map(([name, value]) => ({ name, value })),
   ];
 
-  const handleAddToCart = () => {
-    dispatch(addToCart({
-      id: product.id,
-      title: product.title,
-      brand: product.brand,
-      category: product.category,
-      price: product.price,
-      quantity,
-      color: selectedColor,
-      size: selectedSize,
-      image: product.image
-    }));
+  const handleAddToCart = async () => {
+    if (!availableStock || quantity > availableStock || !hasAvailableVariant) return;
+    setCartMessage('');
+    if (auth.isAuthenticated) {
+      try {
+        await addCartItem({ productId: product.id, quantity, color: selectedColor, size: selectedSize }).unwrap();
+      } catch (error) {
+        setCartMessage(error?.data?.message || 'This item could not be added to your cart.');
+        return false;
+      }
+    } else {
+      dispatch(addToCart({
+        id: product.id,
+        title: product.title,
+        brand: product.brand,
+        category: product.category,
+        price: currentPrice,
+        quantity,
+        color: selectedColor,
+        size: selectedSize,
+        image: gallery[activeImageIdx] || product.image
+      }));
+    }
     
     setCartSuccess(true);
     setTimeout(() => setCartSuccess(false), 3000);
+    return true;
   };
 
-  const handleBuyNow = () => {
-    handleAddToCart();
-    navigate('/checkout');
+  const handleBuyNow = async () => {
+    if (await handleAddToCart()) navigate('/checkout');
   };
 
-  const handleWishlistToggle = () => {
-    dispatch(toggleWishlist(product.id));
+  const handleWishlistToggle = async () => {
+    if (!auth.isAuthenticated) {
+      dispatch(toggleWishlist(product.id));
+      return;
+    }
+    try {
+      if (isWishlisted) await removeWishlistItem(product.id).unwrap();
+      else await addWishlistItem(product.id).unwrap();
+    } catch (error) {
+      setCartMessage(error?.data?.message || 'Your wishlist could not be updated.');
+    }
   };
 
   // Find related products
-  const relatedProducts = allProducts
-    ? allProducts.filter((p) => p.category === product.category && p.id !== product.id).slice(0, 4)
+  const relatedProducts = relatedData?.products
+    ? relatedData.products.filter((p) => p.id !== product.id).slice(0, 4)
     : [];
+
+  const submitReview = async (event) => {
+    event.preventDefault();
+    setReviewMessage('');
+    try {
+      await createReview({ productId: id, rating: reviewRating, comment: reviewComment }).unwrap();
+      setReviewComment('');
+      setReviewOpen(false);
+      setReviewMessage('Your review is submitted and will appear after moderation.');
+    } catch (error) {
+      setReviewMessage(error?.data?.message || 'You must purchase this product before reviewing it.');
+    }
+  };
 
   return (
     <div className="max-w-container-max mx-auto px-gutter">
@@ -157,11 +209,10 @@ const ProductDetails = () => {
 
             <div className="py-md border-b border-outline-variant/10">
               <p className="font-headline-sm text-headline-sm text-primary font-bold">
-                ${product.price.toFixed(2)}
+                ${Number(currentPrice).toFixed(2)}
               </p>
-              <p className="font-body-sm text-body-sm text-on-surface-variant mt-xs">
-                Or 4 interest-free payments of ${(product.price / 4).toFixed(2)} with <span className="font-bold underline cursor-help text-primary">AfterPay</span>
-              </p>
+              {product.discountPrice != null && product.discountPrice < product.price && !selectedVariant && <p className="text-sm text-on-surface-variant line-through">${Number(product.price).toFixed(2)}</p>}
+              <p className="font-body-sm text-body-sm text-on-surface-variant mt-xs">{availableStock > 0 ? `${availableStock} in stock` : 'Out of stock'}</p>
             </div>
 
             {/* Colors Swatches */}
@@ -226,7 +277,7 @@ const ProductDetails = () => {
                     {quantity}
                   </span>
                   <button
-                    onClick={() => setQuantity((q) => q + 1)}
+                    onClick={() => setQuantity((q) => Math.min(availableStock || q, q + 1))}
                     className="px-4 h-full hover:bg-surface-container transition-colors text-lg"
                   >
                     +
@@ -235,14 +286,16 @@ const ProductDetails = () => {
                 
                 <button
                   onClick={handleAddToCart}
-                  className="flex-1 bg-primary text-white h-14 rounded-xl font-button text-button hover:opacity-90 transition-all active:scale-[0.98] tracking-wider uppercase"
+                  disabled={!availableStock || quantity > availableStock || !hasAvailableVariant}
+                  className="flex-1 bg-primary text-white h-14 rounded-xl font-button text-button hover:opacity-90 transition-all active:scale-[0.98] tracking-wider uppercase disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  Add to Cart
+                  {!availableStock ? 'Out of Stock' : hasAvailableVariant ? 'Add to Cart' : 'Unavailable Variant'}
                 </button>
               </div>
 
               <button
                 onClick={handleBuyNow}
+                disabled={!availableStock || quantity > availableStock || !hasAvailableVariant}
                 className="w-full border border-primary h-14 rounded-xl font-button text-button text-primary hover:bg-surface-container-low transition-all active:scale-[0.98] tracking-wider uppercase"
               >
                 Buy It Now
@@ -262,6 +315,7 @@ const ProductDetails = () => {
                   Product successfully added to your shopping bag!
                 </div>
               )}
+              {cartMessage && <p role="alert" className="text-error text-sm">{cartMessage}</p>}
             </div>
 
             {/* Quick Features */}
@@ -309,31 +363,11 @@ const ProductDetails = () => {
               <p className="font-body-lg text-body-lg text-on-surface leading-relaxed">
                 {product.description}
               </p>
-              <p className="font-body-md text-body-md text-on-surface-variant leading-relaxed">
-                Crafted in collaboration with independent designers, this piece reflects ShopNest's commitment to quiet luxury and sustainable production methods. The custom finish is achieved through proprietary natural oxidation processes, ensuring each piece is unique.
-              </p>
             </div>
           )}
           
           {activeTab === 'spec' && (
-            <div className="grid grid-cols-2 gap-y-md gap-x-gutter animate-fade-in">
-              <div>
-                <p className="font-label-caps text-on-surface-variant text-[10px] uppercase tracking-wider">Material</p>
-                <p className="font-body-md text-primary font-bold">{product.details?.material || "Organic Materials"}</p>
-              </div>
-              <div>
-                <p className="font-label-caps text-on-surface-variant text-[10px] uppercase tracking-wider">Dimensions</p>
-                <p className="font-body-md text-primary font-bold">{product.details?.dimensions || "H: 30cm x W: 20cm"}</p>
-              </div>
-              <div>
-                <p className="font-label-caps text-on-surface-variant text-[10px] uppercase tracking-wider">Weight</p>
-                <p className="font-body-md text-primary font-bold">{product.details?.weight || "1.0kg"}</p>
-              </div>
-              <div>
-                <p className="font-label-caps text-on-surface-variant text-[10px] uppercase tracking-wider">Care Instructions</p>
-                <p className="font-body-md text-primary font-bold">Wipe clean with a soft dry cloth.</p>
-              </div>
-            </div>
+            specifications.length ? <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-md gap-x-gutter animate-fade-in">{specifications.map((item) => <div key={item.name}><dt className="font-label-caps text-on-surface-variant text-[10px] uppercase tracking-wider">{item.name}</dt><dd className="font-body-md text-primary font-bold">{item.value}</dd></div>)}</dl> : <p className="text-sm text-on-surface-variant">No specifications have been added for this product.</p>
           )}
           
           {activeTab === 'ship' && (
@@ -349,53 +383,42 @@ const ProductDetails = () => {
         </div>
       </section>
 
-      {/* Verified Reviews */}
+      {/* Purchase-verified reviews */}
       <section className="mt-xl py-xl border-t border-outline-variant/30">
-        <div className="flex justify-between items-end mb-lg">
+        <div className="flex flex-wrap justify-between items-end gap-md mb-lg">
           <div>
-            <h2 className="font-headline-sm text-headline-sm text-primary">Verified Reviews</h2>
-            <p className="font-body-sm text-body-sm text-on-surface-variant">Based on {product.reviewsCount} customer experiences</p>
+            <h2 className="font-headline-sm text-headline-sm text-primary">Customer Reviews</h2>
+            <p className="font-body-sm text-body-sm text-on-surface-variant">Based on {reviews.length} verified customer experiences</p>
           </div>
-          <button className="font-label-caps text-label-caps border-b border-primary pb-xs hover:opacity-75 transition-opacity tracking-widest text-[11px] uppercase">
-            Write a review
-          </button>
+          {auth.isAuthenticated ? (
+            <button onClick={() => setReviewOpen((open) => !open)} className="font-label-caps text-label-caps border-b border-primary pb-xs tracking-widest text-[11px] uppercase">Write a review</button>
+          ) : <Link to="/login" className="font-label-caps text-label-caps border-b border-primary pb-xs tracking-widest text-[11px] uppercase">Sign in to review</Link>}
         </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-lg">
-          <div className="p-lg bg-surface-container-lowest rounded-xl border border-outline-variant/20 shadow-xs">
-            <div className="flex items-center gap-sm mb-md">
-              <div className="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center font-bold text-on-secondary-container text-sm">
-                E
-              </div>
-              <div>
-                <p className="font-label-caps text-label-caps font-bold">Elena R.</p>
-                <p className="text-[10px] text-on-surface-variant">Verified Purchase • 2 weeks ago</p>
-              </div>
-            </div>
-            <Rating rating={5} size={14} className="mb-sm text-secondary" />
-            <p className="font-body-sm text-body-sm text-on-surface italic leading-relaxed">
-              "The texture is even more beautiful in person. It has a significant weight to it that feels very high quality. Truly an architectural anchor for my dining table."
-            </p>
-          </div>
-          
-          <div className="p-lg bg-surface-container-lowest rounded-xl border border-outline-variant/20 shadow-xs">
-            <div className="flex items-center gap-sm mb-md">
-              <div className="w-10 h-10 rounded-full bg-surface-variant flex items-center justify-center font-bold text-on-surface-variant text-sm">
-                M
-              </div>
-              <div>
-                <p className="font-label-caps text-label-caps font-bold">Marcus T.</p>
-                <p className="text-[10px] text-on-surface-variant">Verified Purchase • 1 month ago</p>
-              </div>
-            </div>
-            <Rating rating={4} size={14} className="mb-sm text-secondary" />
-            <p className="font-body-sm text-body-sm text-on-surface italic leading-relaxed">
-              "Packaged exceptionally well. The shipping took a bit longer to Australia, but the product itself is flawless. Exactly what I was looking for."
-            </p>
-          </div>
-        </div>
-      </section>
 
+        {reviewMessage && <p role="status" className="mb-md rounded-lg bg-surface-container-low p-md text-sm">{reviewMessage}</p>}
+        {reviewOpen && (
+          <form onSubmit={submitReview} className="mb-lg max-w-2xl space-y-md rounded-xl border border-outline-variant/30 bg-surface p-lg">
+            <label className="block text-sm">Rating<select value={reviewRating} onChange={(event) => setReviewRating(Number(event.target.value))} className="mt-xs block rounded-lg border-outline-variant"><option value="5">5 stars</option><option value="4">4 stars</option><option value="3">3 stars</option><option value="2">2 stars</option><option value="1">1 star</option></select></label>
+            <label className="block text-sm">Your review<textarea required minLength={3} maxLength={2000} rows={4} value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} className="mt-xs w-full rounded-lg border-outline-variant" /></label>
+            <button disabled={submittingReview} className="rounded-xl bg-primary px-lg py-sm text-white">{submittingReview ? 'Posting…' : 'Post review'}</button>
+          </form>
+        )}
+
+        {reviewsLoading ? <LoadingSpinner /> : reviews.length ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-lg">
+            {reviews.map((review) => (
+              <article key={review._id} className="p-lg bg-surface-container-lowest rounded-xl border border-outline-variant/20 shadow-xs">
+                <div className="flex items-center gap-sm mb-md">
+                  <div className="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center font-bold text-on-secondary-container text-sm">{review.userName?.charAt(0) || 'C'}</div>
+                  <div><p className="font-label-caps text-label-caps font-bold">{review.userName || 'ShopNest customer'}</p><p className="text-[10px] text-on-surface-variant">Purchase verified · {new Date(review.createdAt).toLocaleDateString()}</p></div>
+                </div>
+                <Rating rating={review.rating} size={14} className="mb-sm text-secondary" />
+                <p className="font-body-sm text-body-sm text-on-surface italic leading-relaxed">{review.comment}</p>
+              </article>
+            ))}
+          </div>
+        ) : <p className="rounded-xl bg-surface-container-low p-lg text-sm text-on-surface-variant">No reviews yet. Be the first verified buyer to share your experience.</p>}
+      </section>
       {/* Related Products Grid */}
       {relatedProducts.length > 0 && (
         <section className="mt-xl pb-xl border-t border-outline-variant/30 pt-xl">
@@ -409,8 +432,41 @@ const ProductDetails = () => {
           </div>
         </section>
       )}
+
+      {/* AI Vector Similar Products */}
+      <AISimilarProductsSection productId={id} />
     </div>
   );
 };
 
+const AISimilarProductsSection = ({ productId }) => {
+  const { data } = useGetAIRecommendationsQuery({ productId, limit: 4 });
+  const recs = data?.data || [];
+
+  if (!recs.length) return null;
+
+  return (
+    <section className="mt-xl pb-xl border-t border-outline-variant/30 pt-xl">
+      <div className="flex items-center gap-2 mb-lg">
+        <div className="p-1.5 bg-primary/10 text-primary rounded-lg">
+          <Sparkles className="w-5 h-5 fill-primary" />
+        </div>
+        <div>
+          <h2 className="font-headline-sm text-xl text-primary font-bold">Similar Products (AI Match)</h2>
+          <p className="text-xs text-on-surface-variant">Matched using catalog embedding vector similarity.</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-md">
+        {recs.map((prod) => (
+          <div key={prod._id || prod.id}>
+            <ProductCard product={prod} />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+};
+
 export default ProductDetails;
+

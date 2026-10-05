@@ -45,6 +45,12 @@ export const errorMiddleware = (err, req, res, next) => {
     message = 'Your session token has expired. Please log in again.';
     errors = ['Token expired.'];
   }
+  // Multipart upload validation
+  else if (err.name === 'MulterError') {
+    statusCode = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+    message = statusCode === 413 ? 'Uploaded file is too large.' : 'Invalid image upload.';
+    errors = [err.message];
+  }
 
   return sendError(res, message, errors, statusCode);
 };

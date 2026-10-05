@@ -39,6 +39,13 @@ const orderSchema = new mongoose.Schema(
         size: {
           type: String
         },
+        variantSku: {
+          type: String,
+          trim: true,
+          uppercase: true,
+          default: ''
+        },
+        isVariant: { type: Boolean, default: false },
         image: {
           type: String
         }
@@ -52,6 +59,8 @@ const orderSchema = new mongoose.Schema(
       type: Number,
       default: 0
     },
+    coupon: { type: mongoose.Schema.Types.ObjectId, ref: 'Coupon', default: null },
+    couponCode: { type: String, trim: true, uppercase: true, default: '' },
     tax: {
       type: Number,
       required: true
@@ -77,7 +86,12 @@ const orderSchema = new mongoose.Schema(
     paymentStatus: {
       type: String,
       enum: ['pending', 'paid', 'failed', 'refunded'],
-      default: 'paid'
+      default: 'pending'
+    },
+    paymentMethod: {
+      type: String,
+      enum: ['cod', 'stripe'],
+      default: 'cod'
     },
     customer: {
       name: {

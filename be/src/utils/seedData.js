@@ -12,6 +12,14 @@ dotenv.config();
 
 const seedData = async () => {
   try {
+    if (!process.env.SEED_ADMIN_EMAIL || !process.env.SEED_ADMIN_PASSWORD || !process.env.SEED_SAMPLE_CUSTOMER_PASSWORD) {
+      throw new Error('Set SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD, and SEED_SAMPLE_CUSTOMER_PASSWORD before running the seed script.');
+    }
+    const adminRole = process.env.SEED_ADMIN_ROLE || 'admin';
+    if (!['admin', 'superadmin'].includes(adminRole)) {
+      throw new Error('SEED_ADMIN_ROLE must be admin or superadmin.');
+    }
+
     await connectDB();
 
     // Clear existing collections
@@ -28,10 +36,11 @@ const seedData = async () => {
     const admin = await User.create({
       firstName: 'Admin',
       lastName: 'User',
-      email: 'admin@shopnest.com',
-      password: 'password123', // auto hashed via pre-save hooks
-      role: 'admin',
-      tier: 'Gold Member'
+      email: process.env.SEED_ADMIN_EMAIL,
+      password: process.env.SEED_ADMIN_PASSWORD,
+      role: adminRole,
+      tier: 'Gold Member',
+      emailVerified: true
     });
 
     // Seed Normal User
@@ -39,8 +48,9 @@ const seedData = async () => {
       firstName: 'Julianne',
       lastName: 'V.',
       email: 'julianne@example.com',
-      password: 'password123', // auto hashed via pre-save hooks
+      password: process.env.SEED_SAMPLE_CUSTOMER_PASSWORD,
       role: 'user',
+      emailVerified: true,
       tier: 'Premium Member',
       avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAjxN5e-VpzuhXSZNgICEqmhN0VtFDgnMo2wP4Zadqz6jlb3PwvIhm-BKEwH_f_-imSLdRhsIpN25FKWsMI1w7iTlDw7ytwrr4bXj9Q2k5CiqubH3nE2H7C9BYNpIQf2clyE_DJSKPfj4mlBvnNWpZtgE5-Bn8dBDK-vr20i2wv7buhe3yUdHFLvBIOot9Y2l4BicMCPIR7yiCLN1t83_dd_LN4_IGklzH6LduPk4RrjyFdUNokK_zd'
     });

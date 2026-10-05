@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
-import { LayoutDashboard, ShoppingBag, Heart, MapPin, Settings, Search, Bell, Menu, X, Globe, Share2, Mail, Package, Users, LineChart, LogOut, ShoppingCart } from 'lucide-react';
+import { LayoutDashboard, ShoppingBag, Heart, MapPin, Settings, Search, Bell, Menu, X, Globe, Share2, Mail, Package, Users, LineChart, LogOut, ShoppingCart, Tag, FileText, Star, BookOpen, Cpu, Sparkles } from 'lucide-react';
 import { logout } from '../features/auth/authSlice';
+import { useLogoutUserMutation } from '../features/auth/authApi';
 
 const AdminLayout = () => {
   const [activeTab, setActiveTab] = useState("Overview");
@@ -10,11 +11,27 @@ const AdminLayout = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const dispatch = useDispatch();
+  const [logoutUser] = useLogoutUserMutation();
 
   const auth = useSelector((state) => state.auth);
 
   React.useEffect(() => {
-    setActiveTab("Overview");
+    const routeTabs = {
+      '/admin': 'Overview',
+      '/admin/orders': 'Orders',
+      '/admin/customers': 'Customers',
+      '/admin/analytics': 'Analytics',
+      '/admin/settings': 'Settings',
+      '/admin/categories': 'Categories',
+      '/admin/products': 'Products',
+      '/admin/inventory': 'Inventory',
+      '/admin/reviews': 'Reviews',
+      '/admin/coupons': 'Coupons',
+      '/admin/cms': 'CMS',
+      '/admin/knowledge-base': 'Knowledge Base',
+      '/admin/ai-analytics': 'AI Analytics',
+    };
+    setActiveTab(routeTabs[location.pathname] || 'Overview');
   }, [location.pathname]);
 
   const isAccount = location.pathname.startsWith('/account');
@@ -30,32 +47,27 @@ const AdminLayout = () => {
 
   // Admin links
   const adminNav = [
-    { label: "Overview", icon: LayoutDashboard },
-    { label: "Inventory", icon: Package },
-    { label: "Orders", icon: ShoppingCart },
-    { label: "Customers", icon: Users },
-    { label: "Analytics", icon: LineChart },
-    { label: "Settings", icon: Settings }
+    { label: "Overview", icon: LayoutDashboard, to: '/admin' },
+    { label: "Categories", icon: Package, to: '/admin/categories' },
+    { label: "Products", icon: ShoppingBag, to: '/admin/products' },
+    { label: "Inventory", icon: Package, to: '/admin/inventory' },
+    { label: "Orders", icon: ShoppingCart, to: '/admin/orders' },
+    { label: "Reviews", icon: Star, to: '/admin/reviews' },
+    { label: "Coupons", icon: Tag, to: '/admin/coupons' },
+    { label: "CMS", icon: FileText, to: '/admin/cms' },
+    { label: "Customers", icon: Users, to: '/admin/customers' },
+    { label: "Analytics", icon: LineChart, to: '/admin/analytics' },
+    { label: "Knowledge Base", icon: BookOpen, to: '/admin/knowledge-base' },
+    { label: "AI Analytics", icon: Cpu, to: '/admin/ai-analytics' },
+    { label: "Settings", icon: Settings, to: '/admin/settings' }
   ];
 
   const currentNav = isAccount ? customerNav : adminNav;
 
-  // Decide user details based on active route
-  const defaultUser = isAccount
-    ? {
-        name: "Julianne V.",
-        tier: "Premium Member",
-        avatar: "https://lh3.googleusercontent.com/aida-public/AB6AXuAjxN5e-VpzuhXSZNgICEqmhN0VtFDgnMo2wP4Zadqz6jlb3PwvIhm-BKEwH_f_-imSLdRhsIpN25FKWsMI1w7iTlDw7ytwrr4bXj9Q2k5CiqubH3nE2H7C9BYNpIQf2clyE_DJSKPfj4mlBvnNWpZtgE5-Bn8dBDK-vr20i2wv7buhe3yUdHFLvBIOot9Y2l4BicMCPIR7yiCLN1t83_dd_LN4_IGklzH6LduPk4RrjyFdUNokK_zd"
-      }
-    : {
-        name: "Admin User",
-        tier: "ShopNest Global",
-        avatar: "https://lh3.googleusercontent.com/aida-public/AB6AXuDkDDSW7e98b8x9Y1CZmM5LasXLqQ1FRSKNPidhnB9Sqydva9I2zFqF88WecB_BeCLfBnUCrVcvsEHVQ1KbuYLBxAOiUDTfkemSEkOrkHI48B3ydR__AV_acjfXE0_6SPlgEgTilaVjUwlBTwLKLoECUXAdWVg0c_76BHpr1kGuJGB4r73Dy3uUUu95gM1m2xSHh7_Erm12Rg-wZQfuty4jOQLSuImmUtAeuzsU-yX8rAj8Vr6B0sud"
-      };
-
-  const displayUser = isAccount ? (auth.user || defaultUser) : defaultUser;
+  const displayUser = auth.user || { name: 'ShopNest account', tier: '' };
 
   const handleLogout = () => {
+    logoutUser();
     dispatch(logout());
     navigate('/');
   };
@@ -77,13 +89,10 @@ const AdminLayout = () => {
           {currentNav.map((item, index) => {
             const isActive = item.label === activeTab;
             return (
-              <a
+              <Link
                 key={index}
-                href="#"
-                onClick={(e) => {
-                  e.preventDefault();
-                  setActiveTab(item.label);
-                }}
+                to={isAccount ? '/account' : item.to}
+                onClick={() => setActiveTab(item.label)}
                 className={`flex items-center px-4 py-3 rounded-lg transition-all scale-[0.98] active:scale-100 ${
                   isActive
                     ? 'bg-secondary-container text-on-secondary-container'
@@ -92,7 +101,7 @@ const AdminLayout = () => {
               >
                 <item.icon className="mr-3 text-current" size={18} />
                 <span className="font-label-caps text-label-caps">{item.label}</span>
-              </a>
+              </Link>
             );
           })}
         </nav>
@@ -144,21 +153,17 @@ const AdminLayout = () => {
             {currentNav.map((item, index) => {
               const isActive = item.label === activeTab;
               return (
-                <a
+                <Link
                   key={index}
-                  href="#"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setActiveTab(item.label);
-                    setSidebarOpen(false);
-                  }}
+                  to={isAccount ? '/account' : item.to}
+                  onClick={() => { setActiveTab(item.label); setSidebarOpen(false); }}
                   className={`flex items-center gap-sm font-label-caps text-lg tracking-wider transition-colors ${
                     isActive ? 'text-primary font-bold' : 'text-on-surface-variant hover:text-primary'
                   }`}
                 >
                   <item.icon size={20} />
                   <span>{item.label}</span>
-                </a>
+                </Link>
               );
             })}
           </nav>
@@ -254,7 +259,7 @@ const AdminLayout = () => {
               </ul>
             </div>
             <div className="flex flex-col justify-between">
-              <p className="font-body-sm text-body-sm text-on-surface-variant">© 2024 ShopNest. All rights reserved.</p>
+              <p className="font-body-sm text-body-sm text-on-surface-variant">Â© 2024 ShopNest. All rights reserved.</p>
               <div className="flex gap-base mt-sm text-primary">
                 <span className="cursor-pointer hover:opacity-70 transition-opacity"><Globe size={18} /></span>
                 <span className="cursor-pointer hover:opacity-70 transition-opacity"><Share2 size={18} /></span>
@@ -269,3 +274,4 @@ const AdminLayout = () => {
 };
 
 export default AdminLayout;
+

@@ -6,6 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { checkoutSchema } from '../../schemas/checkoutSchema';
 import { setShippingMethod, clearCart } from '../../features/cart/cartSlice';
 import { useCreateOrderMutation } from '../../features/orders/orderApi';
+import { useGetAddressesQuery } from '../../features/addresses/addressApi';
 import FormInput from '../../components/forms/FormInput';
 import { ShoppingBasket, ArrowLeft, ChevronLeft, ChevronRight, Lock } from 'lucide-react';
 
@@ -17,6 +18,7 @@ const Checkout = () => {
   const auth = useSelector((state) => state.auth);
   
   const [createOrder, { isLoading: orderLoading }] = useCreateOrderMutation();
+  const { data: savedAddresses = [] } = useGetAddressesQuery(undefined, { skip: !auth.isAuthenticated });
 
   const defaultUserEmail = auth.user?.email || "";
   const defaultUserName = auth.user?.name ? auth.user.name.split(' ') : ["", ""];
@@ -52,6 +54,7 @@ const Checkout = () => {
       const orderPayload = {
         items: cart.items,
         total: cart.total,
+        couponCode: cart.promoCode || undefined,
         customer: {
           name: `${data.firstName} ${data.lastName}`,
           email: data.email,
@@ -60,7 +63,7 @@ const Checkout = () => {
         }
       };
 
-      await createOrder(orderPayload).unwrap();
+      await createOrder({ ...orderPayload, paymentMethod: 'cod' }).unwrap();
       
       // Clear cart
       dispatch(clearCart());
@@ -149,6 +152,23 @@ const Checkout = () => {
             {/* Shipping Address Details */}
             <section className="space-y-md pt-md border-t border-outline-variant/10">
               <h2 className="font-headline-sm text-headline-sm text-primary">Shipping Address</h2>
+
+              {auth.isAuthenticated && savedAddresses.length > 0 && <select
+                aria-label="Choose a saved address"
+                defaultValue=""
+                onChange={(event) => {
+                  const address = savedAddresses.find((entry) => entry._id === event.target.value);
+                  if (!address) return;
+                  setValue('firstName', address.firstName);
+                  setValue('lastName', address.lastName);
+                  setValue('phone', address.phone);
+                  setValue('address', [address.line1, address.line2].filter(Boolean).join(', '));
+                  setValue('city', address.city);
+                  setValue('country', address.country);
+                  setValue('postalCode', address.postalCode);
+                }}
+                className="w-full h-12 bg-white border border-outline-variant/60 rounded-lg px-base font-body-sm"
+              ><option value="">Enter a new address or choose a saved address</option>{savedAddresses.map((address) => <option key={address._id} value={address._id}>{address.label}: {address.line1}, {address.city}{address.isDefault ? ' (default)' : ''}</option>)}</select>}
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
                 <FormInput
@@ -211,6 +231,9 @@ const Checkout = () => {
 
             {/* Shipping Method Selectors */}
             <section className="space-y-md pt-md border-t border-outline-variant/10">
+              <h2 className="font-headline-sm text-headline-sm text-primary">Payment Method</h2>
+              <label className="flex items-center gap-3 rounded-lg border border-primary bg-surface-container-low p-md"><input type="radio" checked readOnly /><span className="font-body-md text-primary font-bold">Cash on delivery</span></label>
+              <p className="font-body-sm text-on-surface-variant">Payment is due when your order arrives.</p>
               <h2 className="font-headline-sm text-headline-sm text-primary">Delivery Method</h2>
               
               <div className="space-y-base">
@@ -323,8 +346,8 @@ const Checkout = () => {
                 </div>
                 {cart.promoApplied && (
                   <div className="flex justify-between text-green-700">
-                    <span className="font-body-sm">Promo Discount (10%)</span>
-                    <span className="font-body-sm font-bold">-${(cart.subtotal * 0.1).toFixed(2)}</span>
+                    <span className="font-body-sm">Coupon discount ({cart.promoCode})</span>
+                    <span className="font-body-sm font-bold">-${cart.discount.toFixed(2)}</span>
                   </div>
                 )}
                 <div className="flex justify-between">
@@ -349,17 +372,7 @@ const Checkout = () => {
 
               {/* Security icons */}
               <div className="pt-md border-t border-outline-variant/10 space-y-md">
-                <div className="grid grid-cols-3 gap-base opacity-40 hover:opacity-60 transition-all duration-300">
-                  <div className="flex justify-center items-center h-10 border border-outline-variant rounded font-label-caps text-[9px] text-primary font-bold">
-                    VISA
-                  </div>
-                  <div className="flex justify-center items-center h-10 border border-outline-variant rounded font-label-caps text-[9px] text-primary font-bold">
-                    MASTERCARD
-                  </div>
-                  <div className="flex justify-center items-center h-10 border border-outline-variant rounded font-label-caps text-[9px] text-primary font-bold">
-                    AMEX
-                  </div>
-                </div>
+                <p className="text-center font-body-sm text-on-surface-variant">Cash is collected by the delivery carrier when your order arrives.</p>
                 
                 <div className="flex items-center justify-center gap-xs text-on-surface-variant">
                   <Lock size={12} className="text-primary" />

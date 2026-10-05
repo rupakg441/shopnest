@@ -6,7 +6,7 @@ import { createReviewValidator } from '../validators/reviewValidator.js';
 
 // Helper to recalculate average rating for a product
 const updateProductRating = async (productObjectId) => {
-  const reviews = await Review.find({ product: productObjectId });
+  const reviews = await Review.find({ product: productObjectId, status: 'approved' });
   const reviewsCount = reviews.length;
   const averageRating = reviewsCount > 0 
     ? Number((reviews.reduce((acc, r) => acc + r.rating, 0) / reviewsCount).toFixed(1))
@@ -36,7 +36,7 @@ export const getProductReviews = async (req, res, next) => {
       return sendError(res, 'Product not found', ['No product exists with the specified ID.'], 404);
     }
 
-    const reviews = await Review.find({ product: product._id }).sort({ createdAt: -1 }).lean();
+    const reviews = await Review.find({ product: product._id, status: 'approved' }).sort({ createdAt: -1 }).lean();
     return sendSuccess(res, 'Product reviews retrieved successfully', reviews);
   } catch (error) {
     next(error);
@@ -67,7 +67,8 @@ export const createProductReview = async (req, res, next) => {
     const order = await Order.findOne({
       user: req.user._id,
       'items.product': product._id,
-      status: { $ne: 'cancelled' }
+      $or: [{ status: 'delivered' }, { paymentStatus: 'paid' }],
+      status: { $nin: ['cancelled', 'refunded'] }
     });
 
     if (!order) {
@@ -92,7 +93,8 @@ export const createProductReview = async (req, res, next) => {
       rating,
       comment,
       userName: req.user.name,
-      order: order._id
+      order: order._id,
+      status: 'pending'
     });
 
     // 4. Recalculate average rating
@@ -117,12 +119,13 @@ export const updateReview = async (req, res, next) => {
     }
 
     // Check ownership
-    if (review.user.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+    if (review.user.toString() !== req.user._id.toString() && !['admin', 'superadmin'].includes(req.user.role)) {
       return sendError(res, 'Not Authorized', ['Cannot edit another user\'s review.'], 403);
     }
 
-    if (rating) review.rating = Number(rating);
-    if (comment) review.comment = comment;
+    if (rating !== undefined) review.rating = Number(rating);
+    if (comment !== undefined) review.comment = comment;
+    if (review.status === 'approved' && !['admin', 'superadmin'].includes(req.user.role)) review.status = 'pending';
 
     const updatedReview = await review.save();
 
@@ -147,7 +150,7 @@ export const deleteReview = async (req, res, next) => {
     }
 
     // Check ownership
-    if (review.user.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+    if (review.user.toString() !== req.user._id.toString() && !['admin', 'superadmin'].includes(req.user.role)) {
       return sendError(res, 'Not Authorized', ['Cannot delete another user\'s review.'], 403);
     }
 
@@ -158,6 +161,34 @@ export const deleteReview = async (req, res, next) => {
     await updateProductRating(productObjectId);
 
     return sendSuccess(res, 'Review deleted successfully');
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getAdminReviews = async (req, res, next) => {
+  try {
+    const status = ['pending', 'approved', 'rejected'].includes(req.query.status) ? req.query.status : undefined;
+    const reviews = await Review.find(status ? { status } : {}).sort({ createdAt: -1 })
+      .populate('product', 'title image').populate('user', 'name email').lean();
+    return sendSuccess(res, 'Reviews retrieved', reviews);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const moderateReview = async (req, res, next) => {
+  try {
+    const { status } = req.body;
+    if (!['approved', 'rejected', 'pending'].includes(status)) {
+      return sendError(res, 'Invalid review status', ['Status must be approved, rejected, or pending.'], 422);
+    }
+    const review = await Review.findById(req.params.id);
+    if (!review) return sendError(res, 'Review not found', ['No review exists with this ID.'], 404);
+    review.status = status;
+    await review.save();
+    await updateProductRating(review.product);
+    return sendSuccess(res, 'Review status updated', review);
   } catch (error) {
     next(error);
   }

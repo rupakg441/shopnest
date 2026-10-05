@@ -4,13 +4,23 @@ import { useSelector, useDispatch } from 'react-redux';
 import { Heart, ShoppingBag, User, Menu, X, Globe, Camera, Mail, ArrowRight } from 'lucide-react';
 import { toggleMobileMenu, setMobileMenuOpen } from '../features/ui/uiSlice';
 import { logout } from '../features/auth/authSlice';
+import { useLogoutUserMutation } from '../features/auth/authApi';
+import AIAssistantWidget from '../components/ai/AIAssistantWidget';
+import ShopNestAssistant from '../components/assistant/ShopNestAssistant';
+import { useSubscribeNewsletterMutation } from '../features/dashboard/newsletterApi';
+import { useGetPublicStoreSettingsQuery } from '../features/dashboard/settingsApi';
 
 const MainLayout = () => {
   const [scrolled, setScrolled] = useState(false);
   const [newsEmail, setNewsEmail] = useState("");
   const [subscribed, setSubscribed] = useState(false);
+  const [newsletterMessage, setNewsletterMessage] = useState('');
   
   const dispatch = useDispatch();
+  const [logoutUser] = useLogoutUserMutation();
+  const [subscribeNewsletter, { isLoading: newsletterLoading }] = useSubscribeNewsletterMutation();
+  const { data: storeSettings } = useGetPublicStoreSettingsQuery();
+  const showAnnouncement = storeSettings ? storeSettings.announcementEnabled : true;
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -39,27 +49,33 @@ const MainLayout = () => {
     dispatch(setMobileMenuOpen(false));
   }, [location.pathname, dispatch]);
 
-  const handleNewsSubmit = (e) => {
+  const handleNewsSubmit = async (e) => {
     e.preventDefault();
     if (newsEmail.trim()) {
-      setSubscribed(true);
-      setNewsEmail("");
+      try {
+        await subscribeNewsletter(newsEmail).unwrap();
+        setSubscribed(true);
+        setNewsletterMessage('Thank you for subscribing.');
+        setNewsEmail('');
+      } catch (error) {
+        setNewsletterMessage(error.data?.message || 'Could not subscribe right now. Please try again.');
+      }
     }
   };
 
   return (
     <div className="min-h-screen flex flex-col bg-background text-on-surface">
       {/* Announcement Bar */}
-      <div className="w-full bg-primary py-2 text-center overflow-hidden">
-        <p className="font-label-caps text-[10px] text-on-primary animate-pulse tracking-widest">
-          COMPLIMENTARY GLOBAL SHIPPING ON ORDERS ABOVE $250 — LIMITED TIME
+      {showAnnouncement && <div className="w-full bg-primary py-2 text-center overflow-hidden">
+        <p className="font-label-caps text-[10px] text-on-primary tracking-widest">
+          {storeSettings?.announcement || 'COMPLIMENTARY GLOBAL SHIPPING ON ORDERS ABOVE $250 — LIMITED TIME'}
         </p>
-      </div>
+      </div>}
 
       {/* Sticky Header */}
       <header
         className={`fixed top-0 w-full z-50 bg-surface/80 backdrop-blur-md border-b border-outline-variant/30 transition-all duration-300 ease-in-out px-gutter ${
-          scrolled ? 'h-16 shadow-sm mt-0' : 'h-20 mt-8 md:mt-10'
+          scrolled ? 'h-16 shadow-sm mt-0' : `h-20 ${showAnnouncement ? 'mt-8 md:mt-10' : ''}`
         }`}
       >
         <div className="flex justify-between items-center h-full max-w-container-max mx-auto w-full">
@@ -68,7 +84,7 @@ const MainLayout = () => {
             to="/"
             className="font-headline-md text-headline-md text-primary tracking-tighter hover:opacity-85 transition-opacity"
           >
-            ShopNest
+            {storeSettings?.storeName || 'ShopNest'}
           </Link>
 
           {/* Navigation Links (Desktop) */}
@@ -100,6 +116,16 @@ const MainLayout = () => {
               className="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors tracking-widest"
             >
               Gifts
+            </Link>
+            <Link
+              to="/ai-assistant"
+              className={`font-label-caps text-label-caps tracking-widest pb-1 border-b-2 transition-colors ${
+                location.pathname === '/ai-assistant'
+                  ? 'text-primary border-primary font-bold'
+                  : 'text-on-surface-variant border-transparent hover:text-primary'
+              }`}
+            >
+              AI Assistant
             </Link>
             <Link
               to="/admin"
@@ -197,6 +223,7 @@ const MainLayout = () => {
             {auth.isAuthenticated && (
               <button
                 onClick={() => {
+                  logoutUser();
                   dispatch(logout());
                   navigate('/');
                 }}
@@ -216,6 +243,8 @@ const MainLayout = () => {
       <main className="flex-grow pt-32">
         <Outlet />
       </main>
+
+      <AIAssistantWidget />
 
       {/* Footer */}
       <footer className="bg-surface-container w-full mt-xl border-t border-outline-variant/30">
@@ -242,7 +271,7 @@ const MainLayout = () => {
               <li><Link to="/products" className="font-body-sm text-body-sm text-on-surface-variant hover:text-primary transition-colors">Shipping & Returns</Link></li>
               <li><a href="#" className="font-body-sm text-body-sm text-on-surface-variant hover:text-primary transition-colors">Size Guide</a></li>
               <li><a href="#" className="font-body-sm text-body-sm text-on-surface-variant hover:text-primary transition-colors">Store Locator</a></li>
-              <li><a href="#" className="font-body-sm text-body-sm text-on-surface-variant hover:text-primary transition-colors">Contact Us</a></li>
+              <li>{storeSettings?.supportEmail ? <a href={`mailto:${storeSettings.supportEmail}`} className="font-body-sm text-body-sm text-on-surface-variant hover:text-primary transition-colors">Contact Us</a> : <span className="font-body-sm text-body-sm text-on-surface-variant">Contact Us</span>}</li>
             </ul>
           </div>
 
@@ -250,8 +279,8 @@ const MainLayout = () => {
           <div>
             <h4 className="font-label-caps text-label-caps text-primary mb-6 tracking-widest uppercase">Legal</h4>
             <ul className="space-y-base">
-              <li><a href="#" className="font-body-sm text-body-sm text-on-surface-variant hover:text-primary transition-colors">Privacy Policy</a></li>
-              <li><a href="#" className="font-body-sm text-body-sm text-on-surface-variant hover:text-primary transition-colors">Terms of Service</a></li>
+              <li><Link to="/pages/privacy-policy" className="font-body-sm text-body-sm text-on-surface-variant hover:text-primary transition-colors">Privacy Policy</Link></li>
+              <li><Link to="/pages/terms-of-service" className="font-body-sm text-body-sm text-on-surface-variant hover:text-primary transition-colors">Terms of Service</Link></li>
               <li><a href="#" className="font-body-sm text-body-sm text-on-surface-variant hover:text-primary transition-colors">Accessibility Statement</a></li>
             </ul>
           </div>
@@ -260,11 +289,11 @@ const MainLayout = () => {
           <div className="space-y-md">
             <h4 className="font-label-caps text-label-caps text-primary tracking-widest uppercase">Newsletter</h4>
             <p className="font-body-sm text-body-sm text-on-surface-variant leading-relaxed">
-              Subscribe for early access to new collections, exclusive editorial content, and a 10% welcome gift.
+              Subscribe for early access to new collections and exclusive editorial content.
             </p>
             {subscribed ? (
               <p className="text-secondary font-label-caps text-label-caps tracking-wider animate-fade-in">
-                Thank you for subscribing. Use code WELCOME10 for 10% off.
+                {newsletterMessage || 'Thank you for subscribing.'}
               </p>
             ) : (
               <form onSubmit={handleNewsSubmit} className="flex border-b border-primary py-xs">
@@ -273,10 +302,11 @@ const MainLayout = () => {
                   required
                   placeholder="Email Address"
                   value={newsEmail}
+                  disabled={newsletterLoading}
                   onChange={(e) => setNewsEmail(e.target.value)}
                   className="bg-transparent border-none focus:ring-0 w-full p-0 font-body-sm text-body-sm outline-none"
                 />
-                <button type="submit" className="hover:opacity-75 transition-opacity" title="Subscribe">
+                <button type="submit" disabled={newsletterLoading} className="hover:opacity-75 transition-opacity disabled:opacity-50" title="Subscribe">
                   <ArrowRight size={18} className="text-primary" />
                 </button>
               </form>

@@ -29,9 +29,20 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['user', 'admin'],
-      default: 'user'
+      enum: ['user', 'customer', 'admin', 'superadmin'],
+      default: 'customer',
+      index: true
     },
+    isActive: { type: Boolean, default: true, index: true },
+    refreshTokenHash: { type: String, select: false },
+    refreshTokenExpiresAt: { type: Date, select: false },
+    rememberSession: { type: Boolean, default: false, select: false },
+    // Existing ShopNest accounts predate verification; registration explicitly sets false.
+    emailVerified: { type: Boolean, default: true },
+    emailVerificationTokenHash: { type: String, select: false },
+    emailVerificationExpiresAt: { type: Date, select: false },
+    passwordResetTokenHash: { type: String, select: false },
+    passwordResetExpiresAt: { type: Date, select: false },
     tier: {
       type: String,
       enum: ['Regular Member', 'Premium Member', 'Gold Member'],

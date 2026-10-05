@@ -3,16 +3,26 @@ import connectDB from './src/config/db.js';
 
 const PORT = process.env.PORT || 5000;
 
-// Connect to Database
-connectDB();
+const startServer = async () => {
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET is required. Copy be/.env.example to be/.env and configure it.');
+  }
+  await connectDB();
 
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
-});
+  const server = app.listen(PORT, () => {
+    console.log(`Server listening at http://localhost:${PORT}`);
+  });
 
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (err) => {
-  console.error(`Unhandled Rejections: ${err.message}`);
-  // Close server and exit process
-  server.close(() => process.exit(1));
+  const shutdown = (signal) => {
+    console.log(`${signal} received; closing server`);
+    server.close(() => process.exit(0));
+  };
+
+  process.once('SIGINT', () => shutdown('SIGINT'));
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+};
+
+startServer().catch((error) => {
+  console.error(`Server startup failed: ${error.message}`);
+  process.exit(1);
 });

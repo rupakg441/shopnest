@@ -1,85 +1,64 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
-import { useGetProductsQuery } from '../../features/products/productApi';
+import { useGetCatalogPageQuery, useGetProductFiltersQuery } from '../../features/products/productApi';
+import { useGetCategoriesQuery } from '../../features/categories/categoryApi';
 import { toggleCategoryFilter, toggleBrandFilter, setMaxPrice, setSortBy, setCurrentPage, resetFilters } from '../../features/products/productSlice';
 import ProductCard from '../../components/product/ProductCard';
 import Breadcrumb from '../../components/common/Breadcrumb';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import EmptyState from '../../components/common/EmptyState';
-import { ChevronDown, PackageOpen } from 'lucide-react';
+import { ChevronDown, PackageOpen, Sparkles } from 'lucide-react';
+import { useGetAIRecommendationsQuery } from '../../features/ai/aiApi';
 
 const Products = () => {
   const dispatch = useDispatch();
-  const { data: products, isLoading } = useGetProductsQuery();
+  const { data: categoryData = [] } = useGetCategoriesQuery();
+  const { data: filterData } = useGetProductFiltersQuery();
 
-  const { selectedCategories, selectedBrands, maxPrice, sortBy } = useSelector((state) => state.products);
+  const { selectedCategories, selectedBrands, maxPrice, sortBy, currentPage } = useSelector((state) => state.products);
 
   const [sortOpen, setSortOpen] = useState(false);
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [minimumRating, setMinimumRating] = useState(0);
 
-  // Available filters configuration
-  const categoriesList = [
-    { name: "Lighting", count: 12 },
-    { name: "Furniture", count: 34 },
-    { name: "Ceramics", count: 18 },
-    { name: "Accessories", count: 8 },
-    { name: "Apparel", count: 20 },
-    { name: "Fragrance", count: 15 }
-  ];
+  const sortValues = { Featured: 'featured', Newest: 'newest', 'Price: Low-High': 'price_asc', 'Price: High-Low': 'price_desc' };
+  const params = useMemo(() => ({
+    page: currentPage,
+    limit: 12,
+    search: search || undefined,
+    category: selectedCategories.length ? selectedCategories.join(',') : undefined,
+    brand: selectedBrands.length ? selectedBrands.join(',') : undefined,
+    maxPrice: maxPrice < 1200 ? maxPrice : undefined,
+    rating: minimumRating || undefined,
+    sort: sortValues[sortBy] || 'featured',
+  }), [currentPage, maxPrice, minimumRating, search, selectedBrands, selectedCategories, sortBy]);
+  const { data: catalog, isLoading, isError } = useGetCatalogPageQuery(params);
+  const products = catalog?.products || [];
+  const pagination = catalog?.pagination;
 
-  const brandsList = ["Ligne Roset", "Hay Design", "Muuto", "Vitra", "Hasami Porcelain", "ShopNest Design"];
+  const categoriesList = categoryData.map((category) => ({ name: category.name, count: category.count || 0 }));
+  const brandsList = filterData?.brands || [];
 
-  const colorsList = [
-    { name: "White", bg: "bg-white border-outline-variant" },
-    { name: "Light Sand", bg: "bg-stone-100 border-outline-variant" },
-    { name: "Charcoal", bg: "bg-stone-900 border-outline" },
-    { name: "Amber Gold", bg: "bg-amber-200 border-outline-variant" },
-    { name: "Deep Indigo", bg: "bg-indigo-950 border-outline-variant" }
-  ];
-
-  // Filtering Logic
-  const filteredProducts = products ? products.filter((product) => {
-    // Category Filter
-    if (selectedCategories.length > 0) {
-      if (!selectedCategories.some(cat => product.category.toLowerCase() === cat.toLowerCase())) {
-        return false;
-      }
-    }
-    
-    // Brand Filter
-    if (selectedBrands.length > 0) {
-      if (!selectedBrands.some(brand => product.brand.toLowerCase().includes(brand.toLowerCase()))) {
-        return false;
-      }
-    }
-    
-    // Price Filter
-    if (product.price > maxPrice) {
-      return false;
-    }
-    
-    return true;
-  }) : [];
-
-  // Sorting Logic
-  const sortedProducts = [...filteredProducts].sort((a, b) => {
-    if (sortBy === "Price: Low-High") {
-      return a.price - b.price;
-    }
-    if (sortBy === "Price: High-Low") {
-      return b.price - a.price;
-    }
-    if (sortBy === "Newest") {
-      const aNew = a.tags?.includes("NEW") ? 1 : 0;
-      const bNew = b.tags?.includes("NEW") ? 1 : 0;
-      return bNew - aNew;
-    }
-    // Featured default ordering
-    return 0;
-  });
+  const sortedProducts = products;
 
   const handleSortSelect = (value) => {
     dispatch(setSortBy(value));
+    dispatch(setCurrentPage(1));
     setSortOpen(false);
+  };
+
+  const submitSearch = (event) => {
+    event.preventDefault();
+    setSearch(searchInput.trim());
+    dispatch(setCurrentPage(1));
+  };
+
+  const clearFilters = () => {
+    dispatch(resetFilters());
+    setSearch('');
+    setSearchInput('');
+    setMinimumRating(0);
   };
 
   return (
@@ -92,7 +71,7 @@ const Products = () => {
           <div>
             <h1 className="font-display-lg text-display-lg text-primary mb-xs">New Arrivals</h1>
             <p className="font-body-sm text-body-sm text-on-surface-variant">
-              Exploring {sortedProducts.length} curated objects for the modern home.
+              Showing {pagination?.total || 0} curated objects for the modern home.
             </p>
           </div>
           
@@ -102,7 +81,7 @@ const Products = () => {
               onClick={() => setSortOpen(!sortOpen)}
               className="flex items-center space-x-sm border border-outline-variant/60 px-md py-sm rounded-lg font-label-caps text-label-caps hover:border-primary transition-all bg-transparent text-primary"
             >
-              <span>Sort By: {sortBy}</span>
+                <span>Sort By: {sortBy}</span>
               <ChevronDown size={14} className={`transform transition-transform ${sortOpen ? 'rotate-180' : ''}`} />
             </button>
             
@@ -130,6 +109,11 @@ const Products = () => {
         </div>
       </section>
 
+      <form onSubmit={submitSearch} className="max-w-container-max mx-auto px-gutter pb-lg flex gap-sm">
+        <input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search products, brands, or details" className="w-full rounded-xl border-outline-variant bg-surface px-md py-sm" aria-label="Search products" />
+        <button className="rounded-xl bg-primary px-lg py-sm text-white">Search</button>
+      </form>
+
       {/* Product Listing Grid + Sidebar */}
       <div className="max-w-container-max mx-auto px-gutter pb-xl flex flex-col md:flex-row gap-lg">
         {/* Sidebar Filters */}
@@ -150,7 +134,7 @@ const Products = () => {
                         <input
                           type="checkbox"
                           checked={isChecked}
-                          onChange={() => dispatch(toggleCategoryFilter(cat.name))}
+                          onChange={() => { dispatch(toggleCategoryFilter(cat.name)); dispatch(setCurrentPage(1)); }}
                           className="w-4 h-4 rounded border-outline-variant/60 text-primary focus:ring-0 cursor-pointer"
                         />
                         <span className="font-body-sm text-on-surface-variant group-hover:text-primary transition-colors">
@@ -200,7 +184,7 @@ const Products = () => {
                       <input
                         type="checkbox"
                         checked={isChecked}
-                        onChange={() => dispatch(toggleBrandFilter(brand))}
+                        onChange={() => { dispatch(toggleBrandFilter(brand)); dispatch(setCurrentPage(1)); }}
                         className="rounded border-outline-variant/60 text-primary focus:ring-0 cursor-pointer"
                         id={`brand-${brand}`}
                       />
@@ -216,26 +200,17 @@ const Products = () => {
               </ul>
             </div>
 
-            {/* Filter Block: Color (Visual Only) */}
             <div>
-              <h3 className="font-label-caps text-label-caps text-primary mb-md pb-xs border-b border-outline-variant/30 tracking-widest uppercase">
-                Colors
-              </h3>
-              <div className="flex flex-wrap gap-sm">
-                {colorsList.map((col) => (
-                  <button
-                    key={col.name}
-                    className={`w-6 h-6 rounded-full border hover:ring-2 hover:ring-offset-2 hover:ring-primary transition-all ${col.bg}`}
-                    title={col.name}
-                  />
-                ))}
-              </div>
+              <h3 className="font-label-caps text-label-caps text-primary mb-md pb-xs border-b border-outline-variant/30 tracking-widest uppercase">Minimum rating</h3>
+              <select value={minimumRating} onChange={(event) => { setMinimumRating(Number(event.target.value)); dispatch(setCurrentPage(1)); }} className="w-full rounded-lg border-outline-variant bg-transparent text-sm">
+                <option value="0">Any rating</option><option value="3">3 stars & up</option><option value="4">4 stars & up</option><option value="4.5">4.5 stars & up</option>
+              </select>
             </div>
 
             {/* Reset Filters CTA */}
-            {(selectedCategories.length > 0 || selectedBrands.length > 0 || maxPrice < 1200 || sortBy !== "Featured") && (
+            {(selectedCategories.length > 0 || selectedBrands.length > 0 || maxPrice < 1200 || sortBy !== "Featured" || minimumRating > 0 || search) && (
               <button
-                onClick={() => dispatch(resetFilters())}
+                onClick={clearFilters}
                 className="w-full py-2 border border-dashed border-error text-error rounded-lg font-button text-button hover:bg-error/5 transition-colors"
               >
                 Clear All Filters
@@ -249,6 +224,8 @@ const Products = () => {
         <div className="flex-grow">
           {isLoading ? (
             <LoadingSpinner />
+          ) : isError ? (
+            <EmptyState title="Products could not load" description="Check your connection and try again." actionText="Retry" actionUrl="/products" icon={PackageOpen} />
           ) : sortedProducts.length === 0 ? (
             <EmptyState
               title="No pieces found"
@@ -269,20 +246,50 @@ const Products = () => {
 
               {/* Load More Pagination */}
               <div className="mt-xl text-center">
-                <button
-                  className="px-xl py-md border border-primary text-primary font-label-caps text-label-caps tracking-widest hover:bg-primary hover:text-white transition-all duration-300 rounded-full"
-                >
-                  Load More
-                </button>
+                <div className="flex items-center justify-center gap-md">
+                  <button disabled={(pagination?.page || 1) <= 1} onClick={() => dispatch(setCurrentPage(currentPage - 1))} className="rounded-full border border-primary px-lg py-sm text-primary disabled:opacity-40">Previous</button>
+                  <span className="text-sm text-on-surface-variant">Page {pagination?.page || 1} of {Math.max(1, pagination?.totalPages || 1)}</span>
+                  <button disabled={(pagination?.page || 1) >= (pagination?.totalPages || 1)} onClick={() => dispatch(setCurrentPage(currentPage + 1))} className="rounded-full border border-primary px-lg py-sm text-primary disabled:opacity-40">Next</button>
+                </div>
                 <p className="mt-md font-body-sm text-body-sm text-on-surface-variant">
-                  Showing {sortedProducts.length} of {sortedProducts.length} results
+                  Showing {sortedProducts.length} of {pagination?.total || 0} results
                 </p>
               </div>
             </>
           )}
+
+          {/* AI Recommended For You Section */}
+          <AIProductRecommendationsSection category={selectedCategories[0]} />
         </div>
       </div>
     </div>
+  );
+};
+
+const AIProductRecommendationsSection = ({ category }) => {
+  const { data } = useGetAIRecommendationsQuery({ category, limit: 4 });
+  const recs = data?.data || [];
+
+  if (!recs.length) return null;
+
+  return (
+    <section className="mt-20 pt-10 border-t border-outline-variant/30">
+      <div className="flex items-center gap-2 mb-6">
+        <div className="p-1.5 bg-primary/10 text-primary rounded-lg">
+          <Sparkles className="w-5 h-5 fill-primary" />
+        </div>
+        <div>
+          <h3 className="font-headline-sm text-xl text-primary font-bold">Recommended for You</h3>
+          <p className="text-xs text-on-surface-variant">Curated using product embeddings & catalog vector similarity.</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        {recs.map((prod) => (
+          <ProductCard key={prod._id || prod.id} product={prod} />
+        ))}
+      </div>
+    </section>
   );
 };
 

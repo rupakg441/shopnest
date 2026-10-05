@@ -3,9 +3,10 @@ import { useSelector, useDispatch } from 'react-redux';
 import { useNavigate, Link, useOutletContext } from 'react-router-dom';
 import { useGetUserOrdersQuery, useCancelOrderMutation } from '../../features/orders/orderApi';
 import { useGetProductsQuery } from '../../features/products/productApi';
-import { toggleWishlist } from '../../features/ui/uiSlice';
 import { useUpdateProfileMutation, useUpdatePasswordMutation } from '../../features/auth/authApi';
 import { updateProfile } from '../../features/auth/authSlice';
+import { useCreateAddressMutation, useDeleteAddressMutation, useGetAddressesQuery, useUpdateAddressMutation } from '../../features/addresses/addressApi';
+import { useRemoveWishlistItemMutation } from '../../features/wishlist/wishlistApi';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import { Award, ShoppingBag, Heart, Trash2, PlusCircle, ArrowRight, User, Key, MapPin, Eye, Settings, FileText } from 'lucide-react';
 
@@ -22,14 +23,19 @@ const Dashboard = () => {
   const [cancelOrder, { isLoading: cancelLoading }] = useCancelOrderMutation();
   const [updateProfileApi, { isLoading: profileUpdating }] = useUpdateProfileMutation();
   const [updatePasswordApi, { isLoading: passwordUpdating }] = useUpdatePasswordMutation();
+  const { data: addresses = [] } = useGetAddressesQuery();
+  const [createAddress, { isLoading: addressSaving }] = useCreateAddressMutation();
+  const [deleteAddress] = useDeleteAddressMutation();
+  const [updateAddress] = useUpdateAddressMutation();
+  const [removeWishlistItem] = useRemoveWishlistItemMutation();
 
   // Selected order details viewer state
   const [selectedOrderId, setSelectedOrderId] = useState(null);
 
   // Addresses forms states
   const [addressForm, setAddressForm] = useState({
-    phone: auth.user?.phone || '',
-    address: auth.user?.address || ''
+    label: 'Home', firstName: auth.user?.firstName || '', lastName: auth.user?.lastName || '',
+    phone: auth.user?.phone || '', line1: '', line2: '', city: '', state: '', postalCode: '', country: '', isDefault: false,
   });
 
   // Profile forms states
@@ -69,17 +75,18 @@ const Dashboard = () => {
 
   const handleRemoveWishlist = (e, productId) => {
     e.stopPropagation();
-    dispatch(toggleWishlist(productId));
+    removeWishlistItem(productId).unwrap().catch((err) => alert(err.data?.message || 'Failed to update wishlist.'));
   };
 
   const handleUpdateAddress = async (e) => {
     e.preventDefault();
     try {
-      const res = await updateProfileApi(addressForm).unwrap();
-      dispatch(updateProfile(res));
-      alert("Shipping address updated successfully.");
+      const payload = { ...addressForm, isDefault: addresses.length === 0 || addressForm.isDefault };
+      if (addressForm.id) await updateAddress({ id: addressForm.id, ...payload }).unwrap();
+      else await createAddress(payload).unwrap();
+      setAddressForm({ label: 'Home', firstName: auth.user?.firstName || '', lastName: auth.user?.lastName || '', phone: '', line1: '', line2: '', city: '', state: '', postalCode: '', country: '', isDefault: false });
     } catch (err) {
-      alert(err.data?.message || "Failed to update address.");
+      alert(err.data?.message || "Failed to save address.");
     }
   };
 
@@ -486,52 +493,21 @@ const Dashboard = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-lg">
-        {/* Current Address Details */}
-        <div className="bg-white p-lg rounded-xl border border-outline-variant/30 space-y-md shadow-xs">
-          <h3 className="font-headline-sm text-base text-primary flex items-center gap-xs font-bold">
-            <MapPin size={18} />
-            Default Shipping Address
-          </h3>
-          <div className="font-body-sm space-y-2 text-on-surface-variant">
-            <p><strong>Name:</strong> {auth.user?.name}</p>
-            <p><strong>Phone:</strong> {auth.user?.phone || 'No phone number provided'}</p>
-            <p><strong>Street Address:</strong> {auth.user?.address || 'No address details provided'}</p>
-          </div>
+        <div className="space-y-3">
+          {addresses.map((address) => <article key={address._id} className="bg-white p-lg rounded-xl border border-outline-variant/30 shadow-xs">
+            <div className="flex justify-between items-start gap-3"><h3 className="font-bold text-primary"><MapPin size={16} className="inline mr-2" />{address.label}{address.isDefault ? ' · Default' : ''}</h3>
+              <div className="flex gap-3 text-xs"><button onClick={() => setAddressForm({ ...address, id: address._id })} className="underline">Edit</button><button onClick={() => deleteAddress(address._id)} className="text-error underline">Delete</button></div></div>
+            <p className="mt-3">{address.firstName} {address.lastName} - {address.phone}</p><p>{address.line1}{address.line2 ? `, ${address.line2}` : ''}</p><p>{[address.city, address.state, address.postalCode, address.country].filter(Boolean).join(', ')}</p>
+            {!address.isDefault && <button className="mt-3 text-xs underline" onClick={() => updateAddress({ id: address._id, isDefault: true })}>Make default</button>}
+          </article>)}
+          {!addresses.length && <p className="bg-white p-lg rounded-xl border">No saved addresses yet.</p>}
         </div>
-
-        {/* Edit Address Form */}
         <div className="bg-white p-lg rounded-xl border border-outline-variant/30 shadow-xs">
-          <h3 className="font-headline-sm text-base text-primary mb-4 font-bold">Edit Address</h3>
-          <form onSubmit={handleUpdateAddress} className="space-y-base">
-            <div>
-              <label className="font-label-caps text-[10px] text-on-surface-variant tracking-wider uppercase block mb-1">Phone Number</label>
-              <input
-                type="text"
-                required
-                placeholder="+1 (555) 019-2834"
-                value={addressForm.phone}
-                onChange={e => setAddressForm({ ...addressForm, phone: e.target.value })}
-                className="w-full px-4 py-3 bg-surface-container-lowest border border-outline-variant/40 rounded-xl font-body-sm"
-              />
-            </div>
-            <div>
-              <label className="font-label-caps text-[10px] text-on-surface-variant tracking-wider uppercase block mb-1">Complete Address Details</label>
-              <textarea
-                required
-                rows="3"
-                placeholder="123 Minimalist Way, Suite A, New York, NY 10001"
-                value={addressForm.address}
-                onChange={e => setAddressForm({ ...addressForm, address: e.target.value })}
-                className="w-full px-4 py-3 bg-surface-container-lowest border border-outline-variant/40 rounded-xl font-body-sm"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={profileUpdating}
-              className="w-full py-3 bg-primary text-white rounded-xl font-button text-xs hover:opacity-90 transition-opacity"
-            >
-              {profileUpdating ? "Saving Address..." : "Save Address"}
-            </button>
+          <h3 className="font-headline-sm text-base text-primary mb-4 font-bold">{addressForm.id ? 'Edit address' : 'Add an address'}</h3>
+          <form onSubmit={handleUpdateAddress} className="grid grid-cols-2 gap-3">
+            {[["label","Label"],["firstName","First name"],["lastName","Last name"],["phone","Phone"],["line1","Address line 1"],["line2","Address line 2"],["city","City"],["state","State / region"],["postalCode","Postal code"],["country","Country"]].map(([key,label]) => <input key={key} required={!['line2','state'].includes(key)} placeholder={label} value={addressForm[key] || ''} onChange={(e) => setAddressForm({ ...addressForm, [key]: e.target.value })} className="w-full px-3 py-3 bg-surface-container-lowest border border-outline-variant/40 rounded-xl font-body-sm" />)}
+            <label className="col-span-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={Boolean(addressForm.isDefault)} onChange={(e) => setAddressForm({ ...addressForm, isDefault: e.target.checked })} /> Set as default</label>
+            <div className="col-span-2 flex gap-3"><button type="submit" disabled={addressSaving} className="flex-1 py-3 bg-primary text-white rounded-xl font-button text-xs">{addressSaving ? 'Saving…' : 'Save address'}</button>{addressForm.id && <button type="button" onClick={() => setAddressForm({ label:'Home', firstName:auth.user?.firstName || '', lastName:auth.user?.lastName || '', phone:'', line1:'', line2:'', city:'', state:'', postalCode:'', country:'', isDefault:false })} className="px-4 border rounded-xl">Cancel</button>}</div>
           </form>
         </div>
       </div>

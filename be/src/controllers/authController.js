@@ -1,137 +1,247 @@
+import jwt from 'jsonwebtoken';
+import { randomBytes } from 'node:crypto';
 import User from '../models/User.js';
-import generateToken from '../utils/generateToken.js';
+import { generateAccessToken, generateRefreshToken } from '../utils/generateToken.js';
 import { sendSuccess, sendError } from '../utils/apiResponse.js';
-import { registerValidator, loginValidator } from '../validators/authValidator.js';
+import {
+  emailValidator,
+  loginValidator,
+  registerValidator,
+  resetPasswordValidator,
+} from '../validators/authValidator.js';
+import { sendAccountEmail } from '../services/mailService.js';
+import {
+  clearRefreshCookie,
+  getCookie,
+  hashToken,
+  REFRESH_COOKIE,
+  setRefreshCookie,
+} from '../utils/authSession.js';
 
-// @desc    Register a new user
-// @route   POST /api/auth/register
-// @access  Public
+const publicUser = (user) => ({
+  id: user._id,
+  firstName: user.firstName,
+  lastName: user.lastName,
+  name: user.name,
+  email: user.email,
+  role: user.role === 'user' ? 'customer' : user.role,
+  tier: user.tier,
+  avatar: user.avatar,
+});
+
+const issueSession = async (user, res, remember = false) => {
+  const accessToken = generateAccessToken(user._id, user.role);
+  const refreshToken = generateRefreshToken(user._id);
+  const decodedRefresh = jwt.decode(refreshToken);
+
+  user.refreshTokenHash = hashToken(refreshToken);
+  user.refreshTokenExpiresAt = new Date(decodedRefresh.exp * 1000);
+  user.rememberSession = remember;
+  await user.save({ validateBeforeSave: false });
+  setRefreshCookie(res, refreshToken, remember);
+
+  return { token: accessToken, user: publicUser(user) };
+};
+
 export const registerUser = async (req, res, next) => {
   try {
-    // Validate request body
-    const validatedData = registerValidator.parse(req.body);
-
-    const { firstName, lastName, email, password } = validatedData;
-
-    // Check if user already exists
-    const userExists = await User.findOne({ email });
-    if (userExists) {
-      return sendError(res, 'User already exists', ['A user with this email address already exists.'], 409);
-    }
-
-    // Create user
+    const { firstName, lastName, email, password } = registerValidator.parse(req.body);
+    const requiresVerification = process.env.EMAIL_VERIFICATION_REQUIRED !== 'false';
     const user = await User.create({
       firstName,
       lastName,
       email,
-      password
+      password,
+      role: 'customer',
+      emailVerified: !requiresVerification,
     });
-
-    if (user) {
-      const token = generateToken(user._id, user.role);
-
-      return sendSuccess(res, 'Registration successful', {
-        token,
-        user: {
-          id: user._id,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          tier: user.tier,
-          avatar: user.avatar
-        }
+    if (requiresVerification) {
+      const token = randomBytes(32).toString('hex');
+      user.emailVerificationTokenHash = hashToken(token);
+      user.emailVerificationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      await user.save({ validateBeforeSave: false });
+      const actionUrl = `${process.env.CLIENT_URL || 'http://localhost:5173'}/verify-email?token=${token}`;
+      await sendAccountEmail({
+        to: user.email,
+        subject: 'Verify your ShopNest account',
+        text: 'Verify your email address to finish creating your ShopNest account.',
+        actionUrl,
+      });
+      return sendSuccess(res, 'Check your email to verify your account.', {
+        verificationRequired: true,
+        email: user.email,
       }, 201);
-    } else {
-      return sendError(res, 'Invalid user data', ['Failed to create user.'], 400);
     }
+
+    const session = await issueSession(user, res, true);
+    return sendSuccess(res, 'Registration successful', session, 201);
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Authenticate user & get token
-// @route   POST /api/auth/login
-// @access  Public
-export const loginUser = async (req, res, next) => {
+const authenticate = async (req, res, next, adminsOnly = false) => {
   try {
-    console.log("[LOGIN] 1. Parsing credentials...");
-    const validatedData = loginValidator.parse(req.body);
-    const { email, password } = validatedData;
-
-    console.log("[LOGIN] 2. Querying user in DB for email:", email);
-    // Check for user
+    const { email, password, remember } = loginValidator.parse(req.body);
     const user = await User.findOne({ email }).select('+password');
-    console.log("[LOGIN] 3. Query finished. User found:", user ? "YES" : "NO");
-
-    if (!user) {
-      console.log("[LOGIN] 3a. User not found, sending 401");
+    if (!user || !(await user.matchPassword(password))) {
       return sendError(res, 'Invalid credentials', ['Invalid email or password.'], 401);
     }
-
-    console.log("[LOGIN] 4. Matching password...");
-    // Check password
-    const isMatch = await user.matchPassword(password);
-    console.log("[LOGIN] 5. Password match status:", isMatch);
-
-    if (!isMatch) {
-      console.log("[LOGIN] 5a. Password mismatch, sending 401");
+    if (!user.isActive) {
+      return sendError(res, 'Account unavailable', ['This account is currently unavailable.'], 403);
+    }
+    if (process.env.EMAIL_VERIFICATION_REQUIRED !== 'false' && !user.emailVerified) {
+      return sendError(res, 'Email verification required', ['Verify your email before signing in.'], 403);
+    }
+    const isAdmin = ['admin', 'superadmin'].includes(user.role);
+    if (adminsOnly && !isAdmin) {
       return sendError(res, 'Invalid credentials', ['Invalid email or password.'], 401);
     }
-
-    console.log("[LOGIN] 6. Generating JWT token...");
-    const token = generateToken(user._id, user.role);
-    console.log("[LOGIN] 7. Token generated successfully");
-
-    return sendSuccess(res, 'Login successful', {
-      token,
-      user: {
-        id: user._id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        tier: user.tier,
-        avatar: user.avatar
-      }
-    });
+    const session = await issueSession(user, res, remember);
+    return sendSuccess(res, 'Login successful', session);
   } catch (error) {
-    console.log("[LOGIN] ERROR caught:", error);
     next(error);
   }
 };
 
-// @desc    Get current logged in user profile
-// @route   GET /api/auth/me
-// @access  Private
-export const getMe = async (req, res, next) => {
+export const loginUser = (req, res, next) => authenticate(req, res, next);
+export const loginAdmin = (req, res, next) => authenticate(req, res, next, true);
+
+export const refreshSession = async (req, res, next) => {
   try {
-    const user = req.user;
-    return sendSuccess(res, 'User profile retrieved', {
-      user: {
-        id: user._id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        tier: user.tier,
-        avatar: user.avatar
-      }
-    });
+    const refreshToken = getCookie(req, REFRESH_COOKIE);
+    if (!refreshToken) {
+      clearRefreshCookie(res);
+      return sendError(res, 'Authentication required', ['Refresh session is missing.'], 401);
+    }
+
+    const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
+    if (decoded.tokenType !== 'refresh') {
+      clearRefreshCookie(res);
+      return sendError(res, 'Authentication required', ['Refresh session is invalid.'], 401);
+    }
+    const user = await User.findById(decoded.userId)
+      .select('+refreshTokenHash +refreshTokenExpiresAt +rememberSession');
+    if (!user || !user.isActive || !user.refreshTokenHash ||
+        user.refreshTokenHash !== hashToken(refreshToken) ||
+        user.refreshTokenExpiresAt <= new Date()) {
+      clearRefreshCookie(res);
+      return sendError(res, 'Authentication required', ['Refresh session is invalid or expired.'], 401);
+    }
+
+    const session = await issueSession(user, res, user.rememberSession);
+    return sendSuccess(res, 'Session refreshed', session);
+  } catch (error) {
+    clearRefreshCookie(res);
+    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+      return sendError(res, 'Authentication required', ['Refresh session is invalid or expired.'], 401);
+    }
+    next(error);
+  }
+};
+
+export const getMe = async (req, res) => {
+  return sendSuccess(res, 'User profile retrieved', { user: publicUser(req.user) });
+};
+
+export const verifyEmail = async (req, res, next) => {
+  try {
+    const token = req.body.token;
+    if (typeof token !== 'string' || token.length < 32) {
+      return sendError(res, 'Invalid verification link', ['The verification link is invalid or expired.'], 400);
+    }
+    const user = await User.findOne({
+      emailVerificationTokenHash: hashToken(token),
+      emailVerificationExpiresAt: { $gt: new Date() },
+    }).select('+emailVerificationTokenHash +emailVerificationExpiresAt');
+    if (!user) {
+      return sendError(res, 'Invalid verification link', ['The verification link is invalid or expired.'], 400);
+    }
+    user.emailVerified = true;
+    user.emailVerificationTokenHash = undefined;
+    user.emailVerificationExpiresAt = undefined;
+    await user.save({ validateBeforeSave: false });
+    return sendSuccess(res, 'Email verified. You can now sign in.', {});
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Log user out
-// @route   POST /api/auth/logout
-// @access  Private
+export const resendVerification = async (req, res, next) => {
+  try {
+    const { email } = emailValidator.parse(req.body);
+    const user = await User.findOne({ email }).select('+emailVerificationTokenHash +emailVerificationExpiresAt');
+    if (user && !user.emailVerified && user.isActive) {
+      const token = randomBytes(32).toString('hex');
+      user.emailVerificationTokenHash = hashToken(token);
+      user.emailVerificationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      await user.save({ validateBeforeSave: false });
+      const actionUrl = `${process.env.CLIENT_URL || 'http://localhost:5173'}/verify-email?token=${token}`;
+      await sendAccountEmail({ to: user.email, subject: 'Verify your ShopNest account', text: 'Verify your email address to access your ShopNest account.', actionUrl });
+    }
+    return sendSuccess(res, 'If the account needs verification, a new email has been sent.', {});
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const requestPasswordReset = async (req, res, next) => {
+  try {
+    const { email } = emailValidator.parse(req.body);
+    const user = await User.findOne({ email }).select('+passwordResetTokenHash +passwordResetExpiresAt');
+    if (user && user.isActive) {
+      const token = randomBytes(32).toString('hex');
+      user.passwordResetTokenHash = hashToken(token);
+      user.passwordResetExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+      await user.save({ validateBeforeSave: false });
+      const actionUrl = `${process.env.CLIENT_URL || 'http://localhost:5173'}/reset-password?token=${token}`;
+      await sendAccountEmail({ to: user.email, subject: 'Reset your ShopNest password', text: 'Use this one-time link to reset your ShopNest password. It expires in 30 minutes.', actionUrl });
+    }
+    return sendSuccess(res, 'If an account exists for that email, password reset instructions have been sent.', {});
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const resetPassword = async (req, res, next) => {
+  try {
+    const { token, password } = resetPasswordValidator.parse(req.body);
+    const user = await User.findOne({
+      passwordResetTokenHash: hashToken(token),
+      passwordResetExpiresAt: { $gt: new Date() },
+    }).select('+password +passwordResetTokenHash +passwordResetExpiresAt +refreshTokenHash +refreshTokenExpiresAt +rememberSession');
+    if (!user || !user.isActive) {
+      return sendError(res, 'Invalid reset link', ['The password reset link is invalid or expired.'], 400);
+    }
+    user.password = password;
+    user.passwordResetTokenHash = undefined;
+    user.passwordResetExpiresAt = undefined;
+    user.refreshTokenHash = undefined;
+    user.refreshTokenExpiresAt = undefined;
+    user.rememberSession = undefined;
+    await user.save();
+    return sendSuccess(res, 'Password updated. Sign in with your new password.', {});
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const logoutUser = async (req, res, next) => {
   try {
-    // In stateless JWT auth, clients discard tokens. We return a successful response.
+    const refreshToken = getCookie(req, REFRESH_COOKIE);
+    if (refreshToken) {
+      try {
+        const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
+        if (decoded.tokenType === 'refresh') {
+          await User.findByIdAndUpdate(decoded.userId, {
+            $unset: { refreshTokenHash: 1, refreshTokenExpiresAt: 1, rememberSession: 1 },
+          });
+        }
+      } catch {
+        // Clear an expired or invalid cookie as part of logout too.
+      }
+    }
+    clearRefreshCookie(res);
     return sendSuccess(res, 'Logout successful', {});
   } catch (error) {
     next(error);

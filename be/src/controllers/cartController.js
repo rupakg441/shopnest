@@ -3,232 +3,143 @@ import Product from '../models/Product.js';
 import { sendSuccess, sendError } from '../utils/apiResponse.js';
 
 const TAX_RATE = 0.08;
+const objectIdPattern = /^[0-9a-fA-F]{24}$/;
 
-const calculateCartTotals = (items) => {
-  const subtotal = items.reduce((acc, item) => {
-    const price = item.product.price;
-    return acc + price * item.quantity;
-  }, 0);
+const findProduct = (id) => objectIdPattern.test(id)
+  ? Product.findById(id)
+  : Product.findOne({ id });
 
-  const tax = Number((subtotal * TAX_RATE).toFixed(2));
-  const total = Number((subtotal + tax).toFixed(2));
+const getVariant = (product, color, size) => product.variants?.find((variant) =>
+  (variant.color || '') === color && (variant.size || '') === size);
 
-  return { subtotal, tax, total };
+const unitPrice = (product, color, size) => {
+  const variant = getVariant(product, color, size);
+  return variant?.price ?? product.discountPrice ?? product.price;
 };
 
-// @desc    Get user's cart
-// @route   GET /api/cart
-// @access  Private
+const stockFor = (product, color, size) => getVariant(product, color, size)?.stock ?? product.stock;
+
+const formatCart = (cart) => {
+  const items = cart.items.filter((item) => item.product && item.product.status !== 'inactive').map((item) => {
+    const product = item.product;
+    return {
+      id: product.id || product._id.toString(),
+      productId: product._id.toString(),
+      title: product.title,
+      brand: product.brand,
+      category: product.category,
+      price: unitPrice(product, item.color, item.size),
+      quantity: item.quantity,
+      color: item.color || '',
+      size: item.size || '',
+      image: product.image,
+      stock: stockFor(product, item.color, item.size),
+    };
+  });
+  const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const tax = Number((subtotal * TAX_RATE).toFixed(2));
+  return { items, subtotal, tax, shippingCost: 0, total: Number((subtotal + tax).toFixed(2)) };
+};
+
+const getOrCreateCart = async (userId) => {
+  let cart = await Cart.findOne({ user: userId });
+  if (!cart) cart = await Cart.create({ user: userId, items: [] });
+  return cart;
+};
+
+const validateProductSelection = (product, quantity, color, size) => {
+  if (!product || product.status === 'inactive') return { message: 'Product is unavailable.', status: 404 };
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 1000) return { message: 'Quantity must be a whole number from 1 to 1000.', status: 422 };
+  const hasOptions = Boolean(product.variants?.length);
+  const variant = getVariant(product, color, size);
+  if (hasOptions && !variant) return { message: 'Choose an available product variant.', status: 422 };
+  const stock = stockFor(product, color, size);
+  if (quantity > stock) return { message: `Only ${stock} units are available.`, status: 409 };
+  return null;
+};
+
 export const getCart = async (req, res, next) => {
   try {
-    let cart = await Cart.findOne({ user: req.user._id }).populate('items.product');
-    
-    if (!cart) {
-      cart = await Cart.create({ user: req.user._id, items: [] });
-    }
-
-    const { subtotal, tax, total } = calculateCartTotals(cart.items);
-
-    const formattedItems = cart.items.map(item => ({
-      id: item.product.id || item.product._id.toString(),
-      title: item.product.title,
-      brand: item.product.brand,
-      category: item.product.category,
-      price: item.product.price,
-      quantity: item.quantity,
-      color: item.color,
-      size: item.size,
-      image: item.product.image
-    }));
-
-    return sendSuccess(res, 'Cart retrieved successfully', {
-      items: formattedItems,
-      subtotal,
-      tax,
-      total
-    });
+    const cart = await getOrCreateCart(req.user._id);
+    await cart.populate('items.product');
+    return sendSuccess(res, 'Cart retrieved successfully', formatCart(cart));
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Add item to cart
-// @route   POST /api/cart/items
-// @access  Private
 export const addToCart = async (req, res, next) => {
   try {
-    const { productId, quantity, color, size } = req.body;
-    const qty = Number(quantity) || 1;
+    const productId = String(req.body.productId || '');
+    const quantity = Number(req.body.quantity ?? 1);
+    const color = typeof req.body.color === 'string' ? req.body.color : '';
+    const size = typeof req.body.size === 'string' ? req.body.size : '';
+    const product = await findProduct(productId);
+    const validationError = validateProductSelection(product, quantity, color, size);
+    if (validationError) return sendError(res, validationError.message, [validationError.message], validationError.status);
 
-    // Resolve product in MongoDB
-    let product;
-    if (productId.match(/^[0-9a-fA-F]{24}$/)) {
-      product = await Product.findById(productId);
+    const cart = await getOrCreateCart(req.user._id);
+    const item = cart.items.find((entry) => entry.product.toString() === product._id.toString() && (entry.color || '') === color && (entry.size || '') === size);
+    if (item) {
+      const combinedQuantity = item.quantity + quantity;
+      const combinedError = validateProductSelection(product, combinedQuantity, color, size);
+      if (combinedError) return sendError(res, combinedError.message, [combinedError.message], combinedError.status);
+      item.quantity = combinedQuantity;
     } else {
-      product = await Product.findOne({ id: productId });
+      cart.items.push({ product: product._id, quantity, color, size });
     }
-
-    if (!product) {
-      return sendError(res, 'Product not found', ['No product exists with the specified ID.'], 404);
-    }
-
-    // Validate inventory stock
-    if (product.stock < qty) {
-      return sendError(res, 'Insufficient stock', [`Only ${product.stock} units available in inventory.`], 400);
-    }
-
-    let cart = await Cart.findOne({ user: req.user._id });
-    if (!cart) {
-      cart = new Cart({ user: req.user._id, items: [] });
-    }
-
-    // Check if item already exists in cart with same color and size
-    const existingItemIdx = cart.items.findIndex(item => 
-      item.product.toString() === product._id.toString() &&
-      item.color === color &&
-      item.size === size
-    );
-
-    if (existingItemIdx > -1) {
-      const newQty = cart.items[existingItemIdx].quantity + qty;
-      if (product.stock < newQty) {
-        return sendError(res, 'Insufficient stock', [`Adding ${qty} units would exceed available stock of ${product.stock}.`], 400);
-      }
-      cart.items[existingItemIdx].quantity = newQty;
-    } else {
-      cart.items.push({
-        product: product._id,
-        quantity: qty,
-        color,
-        size
-      });
-    }
-
     await cart.save();
-    
-    // Fetch populated cart for calculating totals
-    const populatedCart = await Cart.findOne({ user: req.user._id }).populate('items.product');
-    const { subtotal, tax, total } = calculateCartTotals(populatedCart.items);
-
-    return sendSuccess(res, 'Item added to cart', {
-      subtotal,
-      tax,
-      total
-    });
+    await cart.populate('items.product');
+    return sendSuccess(res, 'Item added to cart', formatCart(cart));
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Update item quantity in cart
-// @route   PUT /api/cart/items/:productId
-// @access  Private
 export const updateCartItem = async (req, res, next) => {
   try {
-    const { productId } = req.params;
-    const { quantity, color, size } = req.body;
-    const qty = Number(quantity);
-
-    if (isNaN(qty) || qty <= 0) {
-      return sendError(res, 'Validation Error', ['Quantity must be a positive number.'], 400);
-    }
-
-    let product;
-    if (productId.match(/^[0-9a-fA-F]{24}$/)) {
-      product = await Product.findById(productId);
-    } else {
-      product = await Product.findOne({ id: productId });
-    }
-
-    if (!product) {
-      return sendError(res, 'Product not found', ['No product exists with the specified ID.'], 404);
-    }
-
-    // Validate inventory stock
-    if (product.stock < qty) {
-      return sendError(res, 'Insufficient stock', [`Only ${product.stock} units available in inventory.`], 400);
-    }
+    const product = await findProduct(String(req.params.productId));
+    const quantity = Number(req.body.quantity);
+    const color = typeof req.body.color === 'string' ? req.body.color : '';
+    const size = typeof req.body.size === 'string' ? req.body.size : '';
+    const validationError = validateProductSelection(product, quantity, color, size);
+    if (validationError) return sendError(res, validationError.message, [validationError.message], validationError.status);
 
     const cart = await Cart.findOne({ user: req.user._id });
-    if (!cart) {
-      return sendError(res, 'Cart not found', ['No active shopping cart found for user.'], 404);
-    }
-
-    // Find the item matching productId, color, size
-    const item = cart.items.find(item => 
-      item.product.toString() === product._id.toString() &&
-      item.color === color &&
-      item.size === size
-    );
-
-    if (!item) {
-      return sendError(res, 'Item not found in cart', ['No item matches color and size specifications.'], 404);
-    }
-
-    item.quantity = qty;
+    const item = cart?.items.find((entry) => entry.product.toString() === product._id.toString() && (entry.color || '') === color && (entry.size || '') === size);
+    if (!item) return sendError(res, 'Cart item not found', ['No item matches the selected product variant.'], 404);
+    item.quantity = quantity;
     await cart.save();
-
-    const populatedCart = await Cart.findOne({ user: req.user._id }).populate('items.product');
-    const { subtotal, tax, total } = calculateCartTotals(populatedCart.items);
-
-    return sendSuccess(res, 'Cart item updated', { subtotal, tax, total });
+    await cart.populate('items.product');
+    return sendSuccess(res, 'Cart item updated', formatCart(cart));
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Remove item from cart
-// @route   DELETE /api/cart/items/:productId
-// @access  Private
 export const removeCartItem = async (req, res, next) => {
   try {
-    const { productId } = req.params;
-    const { color, size } = req.query; // Send specifications in query parameters
-
-    let product;
-    if (productId.match(/^[0-9a-fA-F]{24}$/)) {
-      product = await Product.findById(productId);
-    } else {
-      product = await Product.findOne({ id: productId });
-    }
-
-    if (!product) {
-      return sendError(res, 'Product not found', ['No product exists with the specified ID.'], 404);
-    }
-
+    const product = await findProduct(String(req.params.productId));
+    if (!product) return sendError(res, 'Product not found', ['No product exists with the specified ID.'], 404);
     const cart = await Cart.findOne({ user: req.user._id });
-    if (!cart) {
-      return sendError(res, 'Cart not found', ['No active shopping cart found for user.'], 404);
-    }
-
-    cart.items = cart.items.filter(item => !(
-      item.product.toString() === product._id.toString() &&
-      item.color === color &&
-      item.size === size
-    ));
-
+    if (!cart) return sendError(res, 'Cart not found', ['No active shopping cart exists.'], 404);
+    const color = typeof req.query.color === 'string' ? req.query.color : '';
+    const size = typeof req.query.size === 'string' ? req.query.size : '';
+    cart.items = cart.items.filter((entry) => !(entry.product.toString() === product._id.toString() && (entry.color || '') === color && (entry.size || '') === size));
     await cart.save();
-
-    const populatedCart = await Cart.findOne({ user: req.user._id }).populate('items.product');
-    const { subtotal, tax, total } = calculateCartTotals(populatedCart.items);
-
-    return sendSuccess(res, 'Cart item removed', { subtotal, tax, total });
+    await cart.populate('items.product');
+    return sendSuccess(res, 'Cart item removed', formatCart(cart));
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Clear entire cart
-// @route   DELETE /api/cart
-// @access  Private
 export const clearUserCart = async (req, res, next) => {
   try {
-    const cart = await Cart.findOne({ user: req.user._id });
-    if (cart) {
-      cart.items = [];
-      await cart.save();
-    }
-    return sendSuccess(res, 'Cart cleared successfully', { subtotal: 0, tax: 0, total: 0 });
+    const cart = await getOrCreateCart(req.user._id);
+    cart.items = [];
+    await cart.save();
+    return sendSuccess(res, 'Cart cleared successfully', formatCart(cart));
   } catch (error) {
     next(error);
   }

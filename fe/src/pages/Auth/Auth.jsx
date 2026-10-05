@@ -1,27 +1,31 @@
-import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+﻿import React, { useState } from 'react';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { loginSchema, registerSchema } from '../../schemas/authSchema';
 import { login } from '../../features/auth/authSlice';
-import { useLoginUserMutation, useRegisterUserMutation } from '../../features/auth/authApi';
+import { useLoginUserMutation, useLoginAdminMutation, useRegisterUserMutation, useResendVerificationMutation } from '../../features/auth/authApi';
 import FormInput from '../../components/forms/FormInput';
-import { Layout } from 'lucide-react';
-
-const Auth = ({ defaultView = 'login' }) => {
+const Auth = ({ defaultView = 'login', adminMode = false }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const dispatch = useDispatch();
 
   const [view, setView] = useState(defaultView); // 'login' or 'register'
+  const [formError, setFormError] = useState('');
+  const [formNotice, setFormNotice] = useState('');
   const [loginUser, { isLoading: loginLoading }] = useLoginUserMutation();
+  const [loginAdmin, { isLoading: adminLoginLoading }] = useLoginAdminMutation();
   const [registerUser, { isLoading: registerLoading }] = useRegisterUserMutation();
+  const [resendVerification, { isLoading: resendLoading }] = useResendVerificationMutation();
 
   // Setup form 1: Login
   const {
     register: registerLogin,
     handleSubmit: handleLoginSubmit,
     formState: { errors: loginErrors },
+    watch: watchLogin,
   } = useForm({
     resolver: zodResolver(loginSchema)
   });
@@ -37,24 +41,34 @@ const Auth = ({ defaultView = 'login' }) => {
 
   const onLoginSubmit = async (data) => {
     try {
-      const response = await loginUser({ email: data.email, password: data.password }).unwrap();
+      setFormError('');
+      setFormNotice('');
+      const credentials = { email: data.email, password: data.password, remember: Boolean(data.remember) };
+      const response = adminMode
+        ? await loginAdmin(credentials).unwrap()
+        : await loginUser(credentials).unwrap();
       dispatch(login(response));
-      navigate('/account');
+      const defaultPath = ['admin', 'superadmin'].includes(response.user.role) ? '/admin' : '/account';
+      navigate(location.state?.from?.pathname || defaultPath, { replace: true });
     } catch (err) {
-      
-      console.error("Login failed: ", err);
-      alert("Invalid credentials.");
+      setFormError(err?.data?.message || 'Sign in failed. Check your email and password.');
     }
   };
 
   const onRegisterSubmit = async (data) => {
     try {
+      setFormError('');
+      setFormNotice('');
       const response = await registerUser(data).unwrap();
+      if (response.verificationRequired) {
+        setFormNotice(`We sent a verification link to ${response.email}.`);
+        setView('login');
+        return;
+      }
       dispatch(login(response));
       navigate('/account');
     } catch (err) {
-      console.error("Registration failed: ", err);
-      alert("Registration failed. Please try again.");
+      setFormError(err?.data?.message || 'Registration failed. Please review your details and try again.');
     }
   };
 
@@ -82,7 +96,7 @@ const Auth = ({ defaultView = 'login' }) => {
             <div className="animate-fade-in space-y-lg">
               <header className="space-y-base">
                 <h1 className="font-display-lg text-display-lg-mobile lg:text-display-lg text-primary leading-tight">
-                  Welcome back.
+                  {adminMode ? 'Admin sign in.' : 'Welcome back.'}
                 </h1>
                 <p className="font-body-md text-body-md text-on-surface-variant">
                   Please enter your details to access your account.
@@ -103,13 +117,13 @@ const Auth = ({ defaultView = 'login' }) => {
                     <label className="font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider">
                       Password
                     </label>
-                    <a href="#" className="font-label-caps text-[10px] text-primary hover:opacity-70 transition-opacity tracking-widest uppercase">
-                      Forgot Password?
-                    </a>
+                    <Link to="/forgot-password" className="font-label-caps text-[10px] text-primary hover:underline tracking-widest uppercase">
+                      Forgot password?
+                    </Link>
                   </div>
                   <input
                     type="password"
-                    placeholder="••••••••"
+                    placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
                     className={`w-full px-md py-sm rounded-lg border bg-transparent font-body-md transition-all focus:ring-0 focus:border-primary ${
                       loginErrors.password ? 'border-error' : 'border-outline-variant/60 focus:border-primary'
                     }`}
@@ -134,70 +148,43 @@ const Auth = ({ defaultView = 'login' }) => {
 
                 <button
                   type="submit"
-                  disabled={loginLoading}
+                  disabled={loginLoading || adminLoginLoading}
                   className="w-full py-md bg-primary text-on-primary rounded-xl font-button text-button hover:opacity-90 transition-all shadow-sm active:scale-[0.98] uppercase tracking-wider"
                 >
-                  {loginLoading ? "Signing in..." : "Sign In"}
+                  {loginLoading || adminLoginLoading ? "Signing in..." : adminMode ? "Admin Sign In" : "Sign In"}
                 </button>
 
-                <div className="relative py-md">
-                  <div className="absolute inset-0 flex items-center">
-                    <div className="w-full border-t border-outline-variant/30"></div>
-                  </div>
-                  <div className="relative flex justify-center text-xs">
-                    <span className="bg-background px-base text-on-surface-variant font-label-caps tracking-widest uppercase">
-                      Or continue with
-                    </span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-md">
+                {formError && <p role="alert" className="text-error text-sm" aria-live="polite">{formError}</p>}
+                {formNotice && <p role="status" className="text-sm text-on-surface-variant" aria-live="polite">{formNotice}</p>}
+                {formError.toLowerCase().includes('verification') && (
                   <button
                     type="button"
-                    onClick={() => {
-                      dispatch(login({
-                        user: { name: "Julianne V.", email: "julianne@example.com", tier: "Premium Member", avatar: "https://lh3.googleusercontent.com/aida-public/AB6AXuAjxN5e-VpzuhXSZNgICEqmhN0VtFDgnMo2wP4Zadqz6jlb3PwvIhm-BKEwH_f_-imSLdRhsIpN25FKWsMI1w7iTlDw7ytwrr4bXj9Q2k5CiqubH3nE2H7C9BYNpIQf2clyE_DJSKPfj4mlBvnNWpZtgE5-Bn8dBDK-vr20i2wv7buhe3yUdHFLvBIOot9Y2l4BicMCPIR7yiCLN1t83_dd_LN4_IGklzH6LduPk4RrjyFdUNokK_zd" },
-                        token: "mock-session-token-12345"
-                      }));
-                      navigate('/account');
+                    disabled={resendLoading || !watchLogin('email')}
+                    onClick={async () => {
+                      try {
+                        const result = await resendVerification({ email: watchLogin('email') }).unwrap();
+                        setFormNotice(result.message);
+                      } catch {
+                        setFormNotice('Unable to resend the verification email. Please try again.');
+                      }
                     }}
-                    className="flex items-center justify-center space-x-base py-sm border border-outline-variant rounded-xl hover:bg-surface-container-low transition-colors active:scale-[0.98]"
+                    className="text-sm text-primary underline disabled:opacity-50"
                   >
-                    <img
-                      alt="Google"
-                      className="w-5 h-5"
-                      src="https://lh3.googleusercontent.com/aida-public/AB6AXuBhbcu39u4rqlVMhLCMDe_V14GYSAIYfKCtIhomGETH9O1hTGxI3-2fAT8Fiw0FQ5XoSxR9qV9ChOactyg1ewR2xcCs9oi6vvnZ-p3odNMWPvtkRE-X9hl9hLgf-MbvTnBz5cnUA_bE8tJBAgi_mxqSohldAbCewkO72kL2omW8BXt7JfD8UQ0AQnoGbvEboSW_eaNBEqxqF-gpMJsjdIOO87Ib-Nt2GWzfd4SVUZxMyoYTjYo7yiRZ"
-                    />
-                    <span className="font-button text-button">Google</span>
+                    {resendLoading ? 'Sending…' : 'Resend verification email'}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      dispatch(login({
-                        user: { name: "Admin User", email: "admin@shopnest.com", role: "admin", tier: "Gold Member" },
-                        token: "mock-session-token-admin"
-                      }));
-                      navigate('/admin');
-                    }}
-                    className="flex items-center justify-center space-x-base py-sm border border-outline-variant rounded-xl hover:bg-surface-container-low transition-colors active:scale-[0.98]"
-                  >
-                    <span className="material-symbols-outlined text-lg leading-none" style={{ fontVariationSettings: "'FILL' 1" }}>
-                      apps
-                    </span>
-                    <span className="font-button text-button">Apple</span>
-                  </button>
-                </div>
+                )}
               </form>
 
               <footer className="mt-lg text-center">
                 <p className="font-body-md text-body-md text-on-surface-variant">
-                  New to ShopNest?{' '}
+                  {adminMode ? 'Customer account? ' : 'New to ShopNest? '}{' '}
                   <button
-                    onClick={() => setView('register')}
+                    onClick={() => adminMode ? navigate('/login') : setView('register')}
                     className="text-primary font-bold hover:underline transition-all"
                   >
-                    Create an account
+                    {adminMode ? 'Sign in here' : 'Create an account'}
                   </button>
+                  {!adminMode && <> · <Link className="text-primary font-bold hover:underline" to="/admin/login">Admin sign in</Link></>}
                 </p>
               </footer>
             </div>
@@ -216,6 +203,8 @@ const Auth = ({ defaultView = 'login' }) => {
               </header>
 
               <form onSubmit={handleRegisterSubmit(onRegisterSubmit)} className="mt-xl space-y-md">
+                {formError && <p role="alert" className="text-error text-sm" aria-live="polite">{formError}</p>}
+                {formNotice && <p role="status" className="text-sm text-on-surface-variant" aria-live="polite">{formNotice}</p>}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
                   <FormInput
                     label="First Name"

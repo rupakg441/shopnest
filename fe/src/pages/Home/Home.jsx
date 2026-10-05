@@ -4,10 +4,16 @@ import { ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
 import { useGetProductsQuery } from '../../features/products/productApi';
 import ProductCard from '../../components/product/ProductCard';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import { useSubscribeNewsletterMutation } from '../../features/dashboard/newsletterApi';
+import { useGetPublicBannersQuery } from '../../features/dashboard/cmsApi';
+
+const DEFAULT_HOME_HERO_IMAGE = 'https://images.unsplash.com/photo-1747396206869-75ea57b325ce?auto=format&fit=crop&crop=faces&w=2400&h=1350&q=85';
 
 const Home = () => {
   const navigate = useNavigate();
   const { data: products, isLoading } = useGetProductsQuery();
+  const { data: homeBanners = [] } = useGetPublicBannersQuery('home_hero');
+  const homeBanner = homeBanners[0];
   
   // Testimonial slider setup
   const testimonials = [
@@ -18,6 +24,9 @@ const Home = () => {
   
   const [currentTestimonial, setCurrentTestimonial] = useState(0);
   const [fade, setFade] = useState(true);
+  const [newsletterEmail, setNewsletterEmail] = useState('');
+  const [newsletterMessage, setNewsletterMessage] = useState('');
+  const [subscribeNewsletter, { isLoading: newsletterLoading }] = useSubscribeNewsletterMutation();
   const scrollContainerRef = useRef(null);
 
   useEffect(() => {
@@ -41,9 +50,21 @@ const Home = () => {
     }
   };
 
-  const handleJoinCollectiveSubmit = (e) => {
+  const handleJoinCollectiveSubmit = async (e) => {
     e.preventDefault();
-    alert("Welcome to the Collective! Check your inbox for your 10% gift code (WELCOME10).");
+    try {
+      await subscribeNewsletter(newsletterEmail).unwrap();
+      setNewsletterMessage('Thank you for joining the Collective.');
+      setNewsletterEmail('');
+    } catch (error) {
+      setNewsletterMessage(error.data?.message || 'Could not subscribe right now. Please try again.');
+    }
+  };
+
+  const openBannerLink = () => {
+    const url = homeBanner?.ctaUrl || '/products';
+    if (url.startsWith('https://')) window.location.assign(url);
+    else navigate(url);
   };
 
   return (
@@ -52,30 +73,31 @@ const Home = () => {
       <section className="relative h-[80vh] md:h-[921px] flex items-center overflow-hidden mb-xl">
         <div className="absolute inset-0 z-0">
           <img
-            className="w-full h-full object-cover"
-            alt="Minimalist linen editorial representation"
-            src="https://lh3.googleusercontent.com/aida-public/AB6AXuBPIMI9BToxboMyGHhPgATPmBvIoWxBJlyzIrd1KHq7DspdOJcYqZMWjmnP92iiJjzdofhGkoLcmrygHl9M0z2IzdMoc36mgka19PuouMvnEseQPJ9EP9rp5EHLBgRZS_ZfQuPX7jYEHjNjiVuHtHFIn7MtdOLeXFFCaDw_dGE2bM8SYZOsnYOGx01RA5tYebQhjmVWoCCdd0GFWQZgmWCc49y6Pgua23a3vBBA1IobQXq5sYG05qaS"
+            className="w-full h-full object-cover object-center"
+            alt={homeBanner?.title || 'Minimalist linen editorial representation'}
+            fetchPriority="high"
+            src={homeBanner?.imageUrl || DEFAULT_HOME_HERO_IMAGE}
           />
           <div className="absolute inset-0 bg-primary/10"></div>
         </div>
         <div className="relative z-10 px-gutter max-w-container-max mx-auto w-full">
           <div className="max-w-2xl">
-            <span className="font-label-caps text-label-caps text-primary tracking-widest block mb-4">SEASONAL CAMPAIGN 2024</span>
+            <span className="font-label-caps text-label-caps text-primary tracking-widest block mb-4">{homeBanner ? 'SHOPNEST EDITORIAL' : 'SEASONAL COLLECTION'}</span>
             <h1 className="font-display-lg text-display-lg-mobile md:text-display-lg text-primary mb-8 leading-tight">
-              Timeless Essentials
+              {homeBanner?.title || 'Timeless Essentials'}
             </h1>
             <p className="font-body-lg text-body-lg text-on-surface-variant mb-10 max-w-lg leading-relaxed">
-              Curated pieces designed to endure beyond the seasons. Discover the intersection of artisanal craft and modern minimalist design.
+              {homeBanner?.subtitle || 'Curated pieces designed to endure beyond the seasons. Discover the intersection of artisanal craft and modern minimalist design.'}
             </p>
             <div className="flex flex-wrap gap-4">
               <button
-                onClick={() => navigate('/products')}
+                onClick={openBannerLink}
                 className="bg-primary text-on-primary px-8 py-4 rounded-xl font-button text-button hover:opacity-90 transition-opacity tracking-wider shadow-sm"
               >
-                Shop the Collection
+                {homeBanner?.ctaLabel || 'Shop the Collection'}
               </button>
               <button
-                onClick={() => navigate('/products')}
+                onClick={openBannerLink}
                 className="border border-primary text-primary px-8 py-4 rounded-xl font-button text-button hover:bg-primary/5 transition-colors tracking-wider"
               >
                 View Campaign
@@ -303,7 +325,7 @@ const Home = () => {
           <div className="md:w-1/2">
             <h2 className="font-headline-md text-headline-md text-primary mb-4">Join the Collective</h2>
             <p className="font-body-md text-on-surface-variant leading-relaxed">
-              Subscribe for early access to new collections, exclusive editorial content, and a 10% welcome gift.
+              Subscribe for early access to new collections and exclusive editorial content.
             </p>
           </div>
           <div className="md:w-1/2 w-full">
@@ -312,19 +334,23 @@ const Home = () => {
                 <input
                   required
                   type="email"
+                  value={newsletterEmail}
+                  onChange={(event) => setNewsletterEmail(event.target.value)}
                   placeholder="Email Address"
                   className="w-full bg-white border-none focus:ring-0 px-6 py-4 font-body-sm text-body-sm outline-none text-primary"
                 />
                 <button
                   type="submit"
+                  disabled={newsletterLoading}
                   className="absolute right-2 top-2 bottom-2 bg-primary text-on-primary px-6 rounded-lg font-button text-button hover:opacity-90 transition-opacity tracking-wider"
                 >
-                  Join
+                  {newsletterLoading ? 'Joining…' : 'Join'}
                 </button>
               </div>
               <p className="text-[10px] text-on-surface-variant/60 text-center md:text-left leading-normal">
                 By subscribing, you agree to our Privacy Policy and Terms of Service.
               </p>
+              {newsletterMessage && <p role="status" className="text-sm text-primary">{newsletterMessage}</p>}
             </form>
           </div>
         </div>

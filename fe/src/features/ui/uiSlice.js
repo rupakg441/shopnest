@@ -1,8 +1,21 @@
 import { createSlice } from '@reduxjs/toolkit';
 
+const loadWishlist = () => {
+  try {
+    const saved = JSON.parse(localStorage.getItem('shopnest_wishlist') || '[]');
+    return Array.isArray(saved) ? saved : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveWishlist = (ids) => {
+  try { localStorage.setItem('shopnest_wishlist', JSON.stringify(ids)); } catch { /* storage may be unavailable */ }
+};
+
 const initialState = {
   mobileMenuOpen: false,
-  wishlist: ["p11", "p27"], // Sandstone Vase, Monolith Chair pre-saved in mock details
+  wishlist: loadWishlist(),
   searchQuery: "",
 };
 
@@ -24,6 +37,11 @@ const uiSlice = createSlice({
       } else {
         state.wishlist.push(productId);
       }
+      saveWishlist(state.wishlist);
+    },
+    setWishlist: (state, action) => {
+      state.wishlist = action.payload;
+      saveWishlist(state.wishlist);
     },
     setSearchQuery: (state, action) => {
       state.searchQuery = action.payload;
@@ -31,5 +49,5 @@ const uiSlice = createSlice({
   }
 });
 
-export const { toggleMobileMenu, setMobileMenuOpen, toggleWishlist, setSearchQuery } = uiSlice.actions;
+export const { toggleMobileMenu, setMobileMenuOpen, toggleWishlist, setWishlist, setSearchQuery } = uiSlice.actions;
 export default uiSlice.reducer;

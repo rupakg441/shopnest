@@ -1,31 +1,19 @@
 import { createSlice } from '@reduxjs/toolkit';
 
-const initialCartItems = [
-  {
-    id: "p12",
-    title: "Serene Sculptural Vase",
-    brand: "ShopNest Design",
-    category: "Ceramics",
-    price: 185.00,
-    quantity: 1,
-    color: "Matte Bone",
-    size: "Large",
-    image: "https://lh3.googleusercontent.com/aida-public/AB6AXuA01ytaOTYZkD9Lp4Iy7lYC2xQ4s8XVLAJ3vx2QXfwOM744ZdZXf1AMKfDVLfXT8SJnRz61mle9G1wssnnSLPltRPRoocpaeM5U5SkeOU45u7ujaqlAvQEgkGLQApFCFQlz0Bt5LuY6TmDHjS-8lkFvJyrZ376b7R5tl1sscQxf6iVsdDa8fVoJrWk-7v9qeO29JENCrQj1bmBlNMt9CsP6vqcJQn-M5PIvUukf7q7vdJKIzaWtQEs-"
-  },
-  {
-    id: "p13",
-    title: "Textured Wool Throw",
-    brand: "ShopNest Home",
-    category: "Decor",
-    price: 120.00,
-    quantity: 1,
-    color: "Charcoal",
-    size: "Standard",
-    image: "https://lh3.googleusercontent.com/aida-public/AB6AXuC37rlGoYEvqLlNU_xPj96qwrPpAAhmUKFspmHjij5Qet-HYugJK0L3GQ-JeAzzKMlQEFQf55XRmMIS9O0wflajcrNGR_883YYOtrtlm5VFjNYxaJQ1XhN7O_8tf2AEo7oPW9UquI9Y-u7T_TQW3KbQ7eIctLCMkoQ1sAggdLKS_9v3rtZYLM1qpURla-ADLt1ncI13q6balm21xxlZnnrkW7Vv-lxpsV1RAffayAZVfPebnQ8LAr2s"
-  }
-];
-
 const TAX_RATE = 0.08;
+
+const loadSavedItems = () => {
+  try {
+    const saved = JSON.parse(localStorage.getItem('shopnest_cart') || '[]');
+    return Array.isArray(saved) ? saved : [];
+  } catch {
+    return [];
+  }
+};
+
+const persist = (items) => {
+  try { localStorage.setItem('shopnest_cart', JSON.stringify(items)); } catch { /* storage may be unavailable */ }
+};
 
 const calculateTotals = (items, shippingCost = 0) => {
   const subtotal = items.reduce((acc, item) => acc + item.price * item.quantity, 0);
@@ -34,13 +22,16 @@ const calculateTotals = (items, shippingCost = 0) => {
   return { subtotal, tax, total };
 };
 
+const initialItems = loadSavedItems();
+
 const initialState = {
-  items: initialCartItems,
+  items: initialItems,
   shippingCost: 0,
   shippingMethod: "Standard",
   promoCode: "",
   promoApplied: false,
-  ...calculateTotals(initialCartItems, 0)
+  discount: 0,
+  ...calculateTotals(initialItems, 0)
 };
 
 const cartSlice = createSlice({
@@ -58,6 +49,21 @@ const cartSlice = createSlice({
         state.items.push(action.payload);
       }
       Object.assign(state, calculateTotals(state.items, state.shippingCost));
+      state.promoCode = '';
+      state.promoApplied = false;
+      state.discount = 0;
+      persist(state.items);
+    },
+    setCart: (state, action) => {
+      state.items = action.payload.items || [];
+      state.shippingCost = action.payload.shippingCost || 0;
+      state.subtotal = action.payload.subtotal || 0;
+      state.tax = action.payload.tax || 0;
+      state.total = action.payload.total || 0;
+      state.promoCode = '';
+      state.promoApplied = false;
+      state.discount = 0;
+      persist(state.items);
     },
     updateQuantity: (state, action) => {
       const { id, color, size, quantity } = action.payload;
@@ -68,6 +74,10 @@ const cartSlice = createSlice({
         item.quantity = quantity;
       }
       Object.assign(state, calculateTotals(state.items, state.shippingCost));
+      state.promoCode = '';
+      state.promoApplied = false;
+      state.discount = 0;
+      persist(state.items);
     },
     removeFromCart: (state, action) => {
       const { id, color, size } = action.payload;
@@ -75,23 +85,33 @@ const cartSlice = createSlice({
         item => !(item.id === id && item.color === color && item.size === size)
       );
       Object.assign(state, calculateTotals(state.items, state.shippingCost));
+      state.promoCode = '';
+      state.promoApplied = false;
+      state.discount = 0;
+      persist(state.items);
     },
     setShippingMethod: (state, action) => {
       const { method, cost } = action.payload;
       state.shippingMethod = method;
       state.shippingCost = cost;
       Object.assign(state, calculateTotals(state.items, state.shippingCost));
-    },
-    applyPromo: (state, action) => {
-      const code = action.payload.trim().toUpperCase();
-      if (code === "WELCOME10" && !state.promoApplied) {
-        state.promoCode = code;
-        state.promoApplied = true;
-        // apply 10% discount to subtotal
-        const discountSubtotal = state.subtotal * 0.9;
-        state.tax = Number((discountSubtotal * TAX_RATE).toFixed(2));
-        state.total = Number((discountSubtotal + state.tax + state.shippingCost).toFixed(2));
+      if (state.discount > 0) {
+        state.tax = Number(((state.subtotal - state.discount) * TAX_RATE).toFixed(2));
+        state.total = Number((state.subtotal - state.discount + state.tax + state.shippingCost).toFixed(2));
       }
+    },
+    applyCoupon: (state, action) => {
+      state.promoCode = action.payload.code;
+      state.promoApplied = true;
+      state.discount = action.payload.discount;
+      state.tax = Number(((state.subtotal - state.discount) * TAX_RATE).toFixed(2));
+      state.total = Number((state.subtotal - state.discount + state.tax + state.shippingCost).toFixed(2));
+    },
+    clearCoupon: (state) => {
+      state.promoCode = '';
+      state.promoApplied = false;
+      state.discount = 0;
+      Object.assign(state, calculateTotals(state.items, state.shippingCost));
     },
     clearCart: (state) => {
       state.items = [];
@@ -101,9 +121,11 @@ const cartSlice = createSlice({
       state.shippingCost = 0;
       state.promoCode = "";
       state.promoApplied = false;
+      state.discount = 0;
+      persist(state.items);
     }
   }
 });
 
-export const { addToCart, updateQuantity, removeFromCart, setShippingMethod, applyPromo, clearCart } = cartSlice.actions;
+export const { addToCart, setCart, updateQuantity, removeFromCart, setShippingMethod, applyCoupon, clearCoupon, clearCart } = cartSlice.actions;
 export default cartSlice.reducer;
