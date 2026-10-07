@@ -88,7 +88,7 @@ export const similaritySearch = async ({ queryText = '', filter = {}, limit = 10
           .map((match) => {
             const id = match.metadata?.productId || match.id;
             const product = productMap.get(id);
-            return product ? { product, score: match.score } : null;
+            return product && match.score >= 0.20 ? { product, score: match.score } : null;
           })
           .filter(Boolean);
 
@@ -113,6 +113,7 @@ export const similaritySearch = async ({ queryText = '', filter = {}, limit = 10
         const score = cosineSimilarity(queryVector, e.embedding);
         return { product: e.product, score };
       })
+      .filter((item) => item.score >= 0.20)
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
 
@@ -132,7 +133,11 @@ export const hybridSearch = async ({ queryText = '', filter = {}, limit = 10 }) 
     }
 
     const safeQuery = String(queryText || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const words = safeQuery.split(/\s+/).filter(Boolean);
+    const stopWords = new Set(['find', 'me', 'a', 'an', 'the', 'good', 'best', 'some', 'looking', 'for', 'want', 'buy', 'show']);
+    const words = safeQuery
+      .split(/\s+/)
+      .filter((w) => w.length > 2 && !stopWords.has(w.toLowerCase()));
+
     const regexPattern = words.length ? words.join('|') : safeQuery;
     const regex = new RegExp(regexPattern, 'i');
 
@@ -145,7 +150,7 @@ export const hybridSearch = async ({ queryText = '', filter = {}, limit = 10 }) 
     if (filter.maxPrice) kwFilter.price = { ...kwFilter.price, $lte: Number(filter.maxPrice) };
     if (filter.minPrice) kwFilter.price = { ...kwFilter.price, $gte: Number(filter.minPrice) };
 
-    const kwProducts = await Product.find(kwFilter).limit(limit);
+    const kwProducts = words.length ? await Product.find(kwFilter).limit(limit) : [];
 
     const resultMap = new Map();
     (vectorResults || []).forEach((r) => {
@@ -167,11 +172,6 @@ export const hybridSearch = async ({ queryText = '', filter = {}, limit = 10 }) 
     return Array.from(resultMap.values()).slice(0, limit);
   } catch (err) {
     console.error('[VectorStoreService] hybridSearch error:', err.message);
-    try {
-      const fallbackProducts = await Product.find({}).limit(limit);
-      return fallbackProducts.map((p) => ({ product: p, score: 0.5 }));
-    } catch (_) {
-      return [];
-    }
+    return [];
   }
 };
