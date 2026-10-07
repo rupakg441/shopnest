@@ -1,4 +1,5 @@
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import Order from '../../models/Order.js';
 import { getChatModel } from '../config/llmConfig.js';
 import { queryKnowledgeBase } from '../rag/ragService.js';
 import { createEcommerceTools } from '../tools/ecommerceTools.js';
@@ -6,7 +7,7 @@ import { sanitizeUserPrompt, wrapDataBoundary } from '../security/promptProtecti
 
 const classifyIntent = (message = '') => {
   const text = message.toLowerCase();
-  if (/cancel/i.test(text)) return 'cancel_order';
+  if (/canc[ee]l|cancle|cancellation/i.test(text)) return 'cancel_order';
   if (/compare/i.test(text)) return 'compare';
   if (/my name|who am i|my account|my profile|my email/i.test(text)) return 'profile';
   if (/order|tracking|delivery|shipping status|purchase|amount|spent|how much|total/i.test(text)) return 'orders';
@@ -87,8 +88,19 @@ export const runShoppingAgent = async ({ userMessage, user }) => {
   // 1. Order Cancellation Intent
   if (intent === 'cancel_order') {
     const cancelTool = tools.find((t) => t.name === 'cancelOrder');
-    const orderMatch = cleanPrompt.match(/SN-\d+|[0-9a-fA-F]{24}/i);
-    const orderIdentifier = orderMatch ? orderMatch[0] : '';
+    let orderMatch = cleanPrompt.match(/SN-\d+|[0-9a-fA-F]{24}/i);
+    let orderIdentifier = orderMatch ? orderMatch[0] : '';
+
+    if (!orderIdentifier && user && user._id) {
+      try {
+        const latestOrder = await Order.findOne({ user: user._id, status: { $in: ['confirmed', 'processing', 'pending'] } }).sort({ createdAt: -1 });
+        if (latestOrder) {
+          orderIdentifier = latestOrder.orderNumber || latestOrder._id.toString();
+        }
+      } catch (err) {
+        console.warn('[LangGraph] Error fetching latest order for cancel intent:', err.message);
+      }
+    }
 
     if (cancelTool && orderIdentifier) {
       try {
