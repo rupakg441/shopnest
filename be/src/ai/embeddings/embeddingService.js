@@ -1,6 +1,6 @@
 import Product from '../../models/Product.js';
 import ProductEmbedding from '../../models/ProductEmbedding.js';
-import { getEmbeddingsModel } from '../config/llmConfig.js';
+import { getEmbeddingsModel, FallbackEmbeddings } from '../config/llmConfig.js';
 import { upsertProductVectors } from '../vector/vectorStoreService.js';
 
 export const buildProductTextDocument = (product) => {
@@ -35,8 +35,14 @@ export const buildProductTextDocument = (product) => {
 };
 
 export const generateEmbedding = async (text) => {
-  const embeddings = getEmbeddingsModel();
-  return embeddings.embedQuery(text);
+  try {
+    const embeddings = getEmbeddingsModel();
+    return await embeddings.embedQuery(text);
+  } catch (err) {
+    console.warn('[EmbeddingService] Provider embedQuery failed, using FallbackEmbeddings:', err.message);
+    const fallback = new FallbackEmbeddings();
+    return await fallback.embedQuery(text);
+  }
 };
 
 export const indexSingleProduct = async (product) => {

@@ -54,8 +54,15 @@ export const upsertProductVectors = async (items = []) => {
 
 export const similaritySearch = async ({ queryText = '', filter = {}, limit = 10 }) => {
   try {
-    const embeddings = getEmbeddingsModel();
-    const queryVector = await embeddings.embedQuery(queryText);
+    let queryVector;
+    try {
+      const embeddings = getEmbeddingsModel();
+      queryVector = await embeddings.embedQuery(queryText);
+    } catch (embErr) {
+      console.warn('[VectorStoreService] Embedding provider failed, using FallbackEmbeddings:', embErr.message);
+      const fallback = new FallbackEmbeddings();
+      queryVector = await fallback.embedQuery(queryText);
+    }
 
     const index = getPineconeIndex();
     if (index) {

@@ -22,8 +22,8 @@ export const chatWithAgent = async (req, res, next) => {
     recordAIMetric({
       intent: result.intent,
       latencyMs: result.latencyMs,
-      tokenCount: Math.round(message.length / 4 + result.answer.length / 4),
-      toolCalls: result.sources.map((s) => s.title),
+      tokenCount: Math.round(message.length / 4 + (result.answer || '').length / 4),
+      toolCalls: (result.sources || []).map((s) => s?.title || s?.id || 'tool'),
       userQuery: message,
     });
 
@@ -47,36 +47,37 @@ export const streamChatWithAgent = async (req, res, next) => {
     };
 
     sendSSE('status', { message: 'Understanding intent & query...' });
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 100));
 
     sendSSE('status', { message: 'Searching catalog & knowledge base...' });
 
     const result = await runShoppingAgent({ userMessage: message, user: req.user });
 
     sendSSE('status', { message: 'Formulating grounded answer...' });
-    await new Promise((r) => setTimeout(r, 150));
+    await new Promise((r) => setTimeout(r, 100));
 
     // Stream the final answer word-by-word
-    const words = result.answer.split(' ');
+    const safeAnswer = result.answer || 'I am ready to help you with your ShopNest request.';
+    const words = safeAnswer.split(' ');
     for (let i = 0; i < words.length; i += 3) {
       const chunk = words.slice(i, i + 3).join(' ') + ' ';
       sendSSE('chunk', { text: chunk });
-      await new Promise((r) => setTimeout(r, 40));
+      await new Promise((r) => setTimeout(r, 30));
     }
 
     sendSSE('done', {
       intent: result.intent,
-      products: result.products,
-      sources: result.sources,
-      requiresConfirmation: result.requiresConfirmation,
-      confirmationData: result.confirmationData,
+      products: result.products || [],
+      sources: result.sources || [],
+      requiresConfirmation: Boolean(result.requiresConfirmation),
+      confirmationData: result.confirmationData || null,
     });
 
     recordAIMetric({
       intent: result.intent,
       latencyMs: result.latencyMs,
-      tokenCount: Math.round(message.length / 4 + result.answer.length / 4),
-      toolCalls: result.sources.map((s) => s.title),
+      tokenCount: Math.round(message.length / 4 + safeAnswer.length / 4),
+      toolCalls: (result.sources || []).map((s) => s?.title || s?.id || 'tool'),
       userQuery: message,
     });
 

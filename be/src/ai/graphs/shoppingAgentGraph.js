@@ -8,10 +8,67 @@ const classifyIntent = (message = '') => {
   const text = message.toLowerCase();
   if (/cancel/i.test(text)) return 'cancel_order';
   if (/compare/i.test(text)) return 'compare';
-  if (/order|tracking|delivery|shipping status|purchase/i.test(text)) return 'orders';
+  if (/my name|who am i|my account|my profile|my email/i.test(text)) return 'profile';
+  if (/order|tracking|delivery|shipping status|purchase|amount|spent|how much|total/i.test(text)) return 'orders';
   if (/return|refund|polic(?:y|ies)|discount|coupon|warranty|shipping|hours|support|call|contact|phone/i.test(text)) return 'policies';
-  if (/laptop|phone|shoe|shirt|dress|buy|recommend|similar|price|stock|specs|best|vase|lamp/i.test(text)) return 'shopping';
+  if (/laptop|phone|shoe|sandal|shirt|dress|buy|recommend|similar|price|stock|specs|best|vase|lamp|sneaker|boot|apparel|footwear/i.test(text)) return 'shopping';
   return 'general';
+};
+
+const formatOrdersResponse = (rawResult) => {
+  let orders = [];
+  try {
+    orders = typeof rawResult === 'string' ? JSON.parse(rawResult) : rawResult;
+  } catch (_) {
+    return rawResult;
+  }
+  if (!Array.isArray(orders) || orders.length === 0) {
+    return 'You currently have no orders placed on your account.';
+  }
+
+  const grandTotal = orders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+  const formattedTotal = grandTotal.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+
+  let text = `You have placed **${orders.length} order${orders.length > 1 ? 's' : ''}** on ShopNest, with a combined total of **${formattedTotal}**.\n\n### Order History:\n`;
+
+  orders.forEach((o, index) => {
+    const orderNum = o.orderNumber || o.orderId || `Order #${index + 1}`;
+    const dateStr = o.createdAt ? new Date(o.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+    const orderTotal = (Number(o.total) || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+    const itemsList = Array.isArray(o.items) && o.items.length
+      ? o.items.map((i) => `${i.title} (x${i.quantity || 1})`).join(', ')
+      : `${o.itemCount || 1} item(s)`;
+
+    text += `**${index + 1}. Order ${orderNum}**\n`;
+    text += `- **Total:** ${orderTotal}\n`;
+    text += `- **Status:** ${o.status || 'Confirmed'} (Payment: ${o.paymentStatus || 'N/A'})\n`;
+    if (dateStr) text += `- **Date:** ${dateStr}\n`;
+    text += `- **Items:** ${itemsList}\n\n`;
+  });
+
+  return text.trim();
+};
+
+const formatCompareResponse = (rawResult) => {
+  let products = [];
+  try {
+    products = typeof rawResult === 'string' ? JSON.parse(rawResult) : rawResult;
+  } catch (_) {
+    return rawResult;
+  }
+  if (!Array.isArray(products) || products.length === 0) {
+    return 'No matching products found to compare.';
+  }
+
+  let text = `### Product Comparison\n\n`;
+  text += `| Product | Brand | Category | Price | Rating | Stock |\n`;
+  text += `| --- | --- | --- | --- | --- | --- |\n`;
+  products.forEach((p) => {
+    const priceStr = (Number(p.price) || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+    text += `| **${p.title}** | ${p.brand || 'Generic'} | ${p.category || 'General'} | ${priceStr} | ⭐ ${p.rating || 'N/A'} | ${p.stock > 0 ? 'In Stock' : 'Out of Stock'} |\n`;
+  });
+
+  return text;
 };
 
 export const runShoppingAgent = async ({ userMessage, user }) => {
@@ -140,7 +197,7 @@ export const runShoppingAgent = async ({ userMessage, user }) => {
     finalAnswer = confirmationData.message || `Order ${confirmationData.orderIdentifier} is eligible for cancellation. Please confirm if you want to proceed.`;
   } else if (toolResults.some((t) => t.tool === 'compareProducts')) {
     const compRes = toolResults.find((t) => t.tool === 'compareProducts').result;
-    finalAnswer = `Here is the comparison between the requested items:\n\n${compRes}`;
+    finalAnswer = formatCompareResponse(compRes);
   } else if (intent === 'cancel_order') {
     const cancelRes = toolResults.find((t) => t.tool === 'cancelOrder');
     finalAnswer = cancelRes ? cancelRes.result : 'Please share your Order Number (e.g. SN-741407) so I can help you cancel it.';
@@ -148,10 +205,18 @@ export const runShoppingAgent = async ({ userMessage, user }) => {
     const orderRes = toolResults.find((t) => t.tool === 'getUserOrders');
     if (!user) {
       finalAnswer = 'Please log in to your ShopNest account to view or track your orders.';
-    } else if (orderRes && orderRes.result.includes('No orders')) {
-      finalAnswer = 'You currently have no orders placed on your account.';
+    } else if (orderRes && (orderRes.result.includes('No orders') || orderRes.result.includes('not logged in'))) {
+      finalAnswer = orderRes.result;
     } else if (orderRes) {
-      finalAnswer = `Here is your recent order information:\n\n${orderRes.result}`;
+      finalAnswer = formatOrdersResponse(orderRes.result);
+    }
+  } else if (intent === 'profile') {
+    if (user) {
+      const userName = user.name || user.username || (user.email ? user.email.split('@')[0] : 'ShopNest Customer');
+      const userEmail = user.email ? ` (**${user.email}**)` : '';
+      finalAnswer = `Your name is **${userName}**${userEmail}. You are currently signed into your ShopNest account.`;
+    } else {
+      finalAnswer = 'You are currently browsing as a guest. Please sign in to your ShopNest account to view your profile details.';
     }
   } else if (intent === 'policies') {
     if (retrievedDocuments.length) {

@@ -4,7 +4,7 @@ import { ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings } from '@langchain
 /**
  * Deterministic local embedding generator used as a non-breaking fallback when API keys are unconfigured.
  */
-class FallbackEmbeddings {
+export class FallbackEmbeddings {
   constructor(dim = 384) {
     this.dim = dim;
   }
@@ -36,7 +36,7 @@ export const getChatModel = (options = {}) => {
   const temperature = options.temperature ?? 0.2;
   const streaming = options.streaming ?? false;
 
-  if (process.env.OPENAI_API_KEY) {
+  if (process.env.OPENAI_API_KEY && process.env.OPENAI_ENABLED !== 'false') {
     return new ChatOpenAI({
       modelName: process.env.OPENAI_MODEL || 'gpt-4o-mini',
       temperature,
@@ -45,30 +45,31 @@ export const getChatModel = (options = {}) => {
     });
   }
 
-  if (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY) {
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (geminiKey && process.env.GEMINI_ENABLED !== 'false' && geminiKey.startsWith('AIzaSy')) {
     return new ChatGoogleGenerativeAI({
       model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
       temperature,
-      apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
+      apiKey: geminiKey,
     });
   }
 
-  console.warn('[AI Provider] Neither OPENAI_API_KEY nor GEMINI_API_KEY is configured. AI operations will use grounded fallbacks.');
   return null;
 };
 
 export const getEmbeddingsModel = () => {
-  if (process.env.OPENAI_API_KEY) {
+  if (process.env.OPENAI_API_KEY && process.env.OPENAI_ENABLED !== 'false') {
     return new OpenAIEmbeddings({
       modelName: 'text-embedding-3-small',
       apiKey: process.env.OPENAI_API_KEY,
     });
   }
 
-  if (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY) {
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (geminiKey && process.env.GEMINI_ENABLED !== 'false' && geminiKey.startsWith('AIzaSy')) {
     return new GoogleGenerativeAIEmbeddings({
       modelName: 'text-embedding-004',
-      apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
+      apiKey: geminiKey,
     });
   }
 

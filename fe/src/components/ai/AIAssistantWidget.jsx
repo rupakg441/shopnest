@@ -44,7 +44,7 @@ const AIAssistantWidget = () => {
       // Try SSE streaming endpoint first
       const token = localStorage.getItem('token') || '';
       const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
-      const streamUrl = `${baseUrl}/ai/stream?message=${encodeURIComponent(queryText)}`;
+      const streamUrl = `${baseUrl}/ai/stream?message=${encodeURIComponent(queryText)}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
 
       const eventSource = new EventSource(streamUrl);
 
