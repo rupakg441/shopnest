@@ -127,12 +127,14 @@ const MainLayout = () => {
             >
               AI Assistant
             </Link>
-            <Link
-              to="/admin"
-              className="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors tracking-widest"
-            >
-              Console
-            </Link>
+            {['admin', 'superadmin'].includes(auth.user?.role) && (
+              <Link
+                to="/admin"
+                className="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors tracking-widest"
+              >
+                Console
+              </Link>
+            )}
           </nav>
 
           {/* Trailing Icons */}
@@ -167,9 +169,9 @@ const MainLayout = () => {
 
             {/* Profile/Dashboard */}
             <Link
-              to={auth.isAuthenticated ? "/account" : "/login"}
+              to={auth.isAuthenticated ? (['admin', 'superadmin'].includes(auth.user?.role) ? "/admin" : "/account") : "/login"}
               className="hover:opacity-75 transition-opacity p-1"
-              title={auth.isAuthenticated ? "My Account" : "Sign In"}
+              title={auth.isAuthenticated ? (['admin', 'superadmin'].includes(auth.user?.role) ? "Admin Console" : "My Account") : "Sign In"}
             >
               <User size={20} strokeWidth={1.5} className="text-primary" />
             </Link>
@@ -217,9 +219,11 @@ const MainLayout = () => {
             <Link to="/products" className="font-label-caps text-lg tracking-wider text-on-surface-variant hover:text-primary">
               Gifts
             </Link>
-            <Link to="/admin" className="font-label-caps text-lg tracking-wider text-on-surface-variant hover:text-primary">
-              Admin Console
-            </Link>
+            {['admin', 'superadmin'].includes(auth.user?.role) && (
+              <Link to="/admin" className="font-label-caps text-lg tracking-wider text-on-surface-variant hover:text-primary">
+                Admin Console
+              </Link>
+            )}
             {auth.isAuthenticated && (
               <button
                 onClick={() => {
